@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Panel, KpiCard } from "../components/KpiCard";
 import { PositionsTable } from "../components/PositionsTable";
 import { WeatherMap } from "../components/WeatherMap";
 import { CityCharts } from "../components/CityCharts";
+import { WeatherGuidance } from "../components/WeatherGuidance";
+import { BotEdgeTable } from "../components/BotEdgeTable";
 import { CITIES, cityForTicker, eventKindFromSeries, seriesFromTicker } from "../lib/cities";
-import { fmtUsd, type Position } from "../lib/api";
+import { api, fmtUsd, type BotSignal, type Position, type WeatherGuidanceLocation } from "../lib/api";
 
 type Props = {
   positions: Position[];
@@ -13,11 +15,81 @@ type Props = {
 
 export function WeatherPage({ positions, pulseKey }: Props) {
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
+  const [guidance, setGuidance] = useState<WeatherGuidanceLocation[]>([]);
+  const [guidanceError, setGuidanceError] = useState<string | null>(null);
+  const [guidanceLoading, setGuidanceLoading] = useState(false);
+  const [botSignals, setBotSignals] = useState<BotSignal[]>([]);
+  const [botError, setBotError] = useState<string | null>(null);
+  const [botLoading, setBotLoading] = useState(false);
 
   const weatherPositions = useMemo(
     () => positions.filter((p) => cityForTicker(p.ticker) !== null),
     [positions]
   );
+
+  const guidanceTickers = useMemo(
+    () => [...new Set(weatherPositions.map((p) => p.ticker))].sort(),
+    [weatherPositions]
+  );
+
+  const guidanceKey = guidanceTickers.join(",");
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      setGuidanceLoading(true);
+      try {
+        const data = await api.weatherGuidance(guidanceTickers);
+        if (!alive) return;
+        setGuidance(data.locations);
+        setGuidanceError(null);
+      } catch (err) {
+        if (!alive) return;
+        setGuidanceError(err instanceof Error ? err.message : "weather guidance failed");
+      } finally {
+        if (alive) setGuidanceLoading(false);
+      }
+    }
+
+    load();
+    const id = window.setInterval(load, 120000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [guidanceKey]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      if (guidanceTickers.length === 0) {
+        setBotSignals([]);
+        setBotLoading(false);
+        return;
+      }
+      setBotLoading(true);
+      try {
+        const data = await api.botSignals(guidanceTickers);
+        if (!alive) return;
+        setBotSignals(data.signals);
+        setBotError(null);
+      } catch (err) {
+        if (!alive) return;
+        setBotError(err instanceof Error ? err.message : "bot signals failed");
+      } finally {
+        if (alive) setBotLoading(false);
+      }
+    }
+
+    load();
+    const id = window.setInterval(load, 60000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [guidanceKey]);
 
   const filteredPositions = useMemo(() => {
     if (!selectedCity) return weatherPositions;
@@ -27,6 +99,8 @@ export function WeatherPage({ positions, pulseKey }: Props) {
   const totalPnl = weatherPositions.reduce((a, p) => a + p.unrealized_pnl_cents + p.realized_pnl_cents, 0);
   const totalExposure = weatherPositions.reduce((a, p) => a + p.market_exposure_cents, 0);
   const cityCount = new Set(weatherPositions.map((p) => cityForTicker(p.ticker)?.code).filter(Boolean)).size;
+  const liveCities = CITIES.filter((c) => c.stationId);
+  const liveCityCount = liveCities.length;
 
   const byKind = useMemo(() => {
     const buckets: Record<string, { count: number; pnl: number }> = {};
@@ -57,9 +131,9 @@ export function WeatherPage({ positions, pulseKey }: Props) {
           sub={`${cityCount} city${cityCount === 1 ? "" : "ies"}`}
         />
         <KpiCard
-          label="Tracked Cities"
-          value={String(CITIES.length)}
-          sub="blue = no holding"
+          label="Live Weather"
+          value={String(liveCityCount)}
+          sub="Apr 2026 temp cities"
         />
         <KpiCard
           label="Selected"
@@ -113,6 +187,66 @@ export function WeatherPage({ positions, pulseKey }: Props) {
           right={<span className="text-[10px] text-term-dim">yes ¢</span>}
         >
           <CityCharts positions={filteredPositions} hours={24} period={60} />
+        </Panel>
+        <Panel title="Reporting Locations" right={<span className="text-[10px] text-term-dim">NWS CLI</span>}>
+          <div className="max-h-[220px] overflow-y-auto divide-y divide-term-line/50">
+            {liveCities.map((city) => (
+              <div key={city.code} className="flex items-center justify-between gap-2 py-1 text-[11px] tabular-nums">
+                <span className="text-term-text truncate">{city.name}</span>
+                <a
+                  href={city.climateReportUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-term-cyan hover:underline shrink-0"
+                >
+                  {city.stationId} / {city.climateStation}
+                </a>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-2 py-1 text-[11px] tabular-nums">
+              <span className="text-term-text truncate">Death Valley</span>
+              <span className="text-term-dim shrink-0">CLI only</span>
+            </div>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="col-span-12">
+        <Panel
+          title={`NWS Forecast Model${selected ? " — " + selected.name : ""}`}
+          right={
+            <span className="text-[10px] text-term-dim">
+              {guidanceLoading ? "refreshing" : `${guidance.length} source${guidance.length === 1 ? "" : "s"}`}
+            </span>
+          }
+        >
+          <WeatherGuidance
+            positions={filteredPositions}
+            locations={guidance}
+            loading={guidanceLoading}
+            error={guidanceError}
+          />
+          <div className="mt-2 text-[10px] text-term-dim">
+            Model uses observed station high/low plus remaining NWS hourly forecast. Settlement remains the final Kalshi rules source linked by station.
+          </div>
+        </Panel>
+      </div>
+
+      <div className="col-span-12">
+        <Panel
+          title={`Bot Edge${selected ? " — " + selected.name : ""}`}
+          right={
+            <span className="text-[10px] text-term-dim">
+              {botLoading ? "refreshing" : `${botSignals.length} signal${botSignals.length === 1 ? "" : "s"}`}
+            </span>
+          }
+        >
+          <BotEdgeTable
+            positions={filteredPositions}
+            signals={botSignals}
+            loading={botLoading}
+            error={botError}
+          />
         </Panel>
       </div>
 

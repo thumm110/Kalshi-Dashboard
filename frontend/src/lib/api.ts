@@ -1,4 +1,14 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+function apiBase(): string {
+  const configured = import.meta.env.VITE_API_BASE || "";
+  const host = typeof window === "undefined" ? "" : window.location.hostname;
+  const pageIsLocal = host === "localhost" || host === "127.0.0.1";
+  const configuredIsLocal = configured.includes("localhost") || configured.includes("127.0.0.1");
+
+  if (configured && (!configuredIsLocal || pageIsLocal)) return configured;
+  return "";
+}
+
+export const API_BASE = apiBase();
 
 function pwd(): string {
   return sessionStorage.getItem("dashpw") || "";
@@ -97,6 +107,71 @@ export type Risk = {
   best_case_gain_cents: number;
 };
 
+export type WeatherGuidanceLocation = {
+  code: string;
+  name: string;
+  timezone: string;
+  lat: number;
+  lng: number;
+  station_id: string | null;
+  station_name?: string | null;
+  climate_station: string;
+  climate_report_url: string;
+  series: string[];
+  contract_day: string;
+  contract_day_start: string;
+  contract_day_end: string;
+  source: string;
+  confidence: string;
+  latest_observation_time?: string | null;
+  latest_temp_f?: number | null;
+  high_so_far_f?: number | null;
+  low_so_far_f?: number | null;
+  observation_count?: number;
+  condition?: string | null;
+  humidity_pct?: number | null;
+  wind_mph?: number | null;
+  forecast_updated_time?: string | null;
+  forecast_period_count?: number;
+  forecast_temp_f?: number | null;
+  forecast_high_f?: number | null;
+  forecast_low_f?: number | null;
+  projected_high_f?: number | null;
+  projected_low_f?: number | null;
+  forecast_error?: string | null;
+  error?: string | null;
+};
+
+export type WeatherGuidanceResponse = {
+  ts: number;
+  locations: WeatherGuidanceLocation[];
+  source_note: string;
+};
+
+export type BotSignal = {
+  ticker: string;
+  source: "weather" | "econ" | string;
+  source_id: number;
+  side?: string | null;
+  model_yes_probability?: number | null;
+  model_side_probability?: number | null;
+  confidence?: number | null;
+  member_count?: number | null;
+  entry_price?: number | null;
+  bot_edge?: number | null;
+  score?: number | null;
+  was_chosen: boolean;
+  skip_reason?: string | null;
+  observed_at?: string | null;
+};
+
+export type BotSignalsResponse = {
+  ts: number;
+  signals: BotSignal[];
+  sources: { source: string; path: string; available: boolean; error?: string | null }[];
+  count: number;
+};
+
 export const api = {
   summary: () => fetchJson<Summary>("/api/summary"),
   positions: (category?: string) =>
@@ -111,6 +186,18 @@ export const api = {
     fetchJson<{ ticker: string; points: { ts: number; yes_price_cents: number }[] }>(
       `/api/market-history?ticker=${encodeURIComponent(ticker)}&hours=${hours}&period=${period}`
     ),
+  weatherGuidance: (tickers?: string[]) => {
+    const qs = tickers && tickers.length > 0
+      ? `?tickers=${encodeURIComponent(tickers.join(","))}`
+      : "";
+    return fetchJson<WeatherGuidanceResponse>(`/api/weather-guidance${qs}`);
+  },
+  botSignals: (tickers?: string[]) => {
+    const qs = tickers && tickers.length > 0
+      ? `?tickers=${encodeURIComponent(tickers.join(","))}`
+      : "";
+    return fetchJson<BotSignalsResponse>(`/api/bot-signals${qs}`);
+  },
 };
 
 export function fmtUsd(cents: number, sign = false): string {

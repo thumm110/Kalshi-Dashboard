@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { BotEdgeTable } from "../components/BotEdgeTable";
 import { KpiCard, Panel } from "../components/KpiCard";
 import { PositionsTable } from "../components/PositionsTable";
 import { ReleaseTimeline } from "../components/ReleaseTimeline";
-import { fmtUsd, type Position } from "../lib/api";
+import { api, fmtUsd, type BotSignal, type Position } from "../lib/api";
 import { countdown, groupByEvent, MACRO_KIND_LABEL, type MacroKind } from "../lib/macro";
 
 type Props = {
@@ -11,8 +12,47 @@ type Props = {
 
 export function EconomicsPage({ positions }: Props) {
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
+  const [botSignals, setBotSignals] = useState<BotSignal[]>([]);
+  const [botError, setBotError] = useState<string | null>(null);
+  const [botLoading, setBotLoading] = useState(false);
 
   const events = useMemo(() => groupByEvent(positions), [positions]);
+  const positionTickers = useMemo(
+    () => [...new Set(positions.map((p) => p.ticker))].sort(),
+    [positions]
+  );
+  const positionKey = positionTickers.join(",");
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      if (positionTickers.length === 0) {
+        setBotSignals([]);
+        setBotLoading(false);
+        return;
+      }
+      setBotLoading(true);
+      try {
+        const data = await api.botSignals(positionTickers);
+        if (!alive) return;
+        setBotSignals(data.signals);
+        setBotError(null);
+      } catch (err) {
+        if (!alive) return;
+        setBotError(err instanceof Error ? err.message : "bot signals failed");
+      } finally {
+        if (alive) setBotLoading(false);
+      }
+    }
+
+    load();
+    const id = window.setInterval(load, 60000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [positionKey]);
 
   const totalPnl = positions.reduce(
     (a, p) => a + p.unrealized_pnl_cents + p.realized_pnl_cents,
@@ -124,6 +164,24 @@ export function EconomicsPage({ positions }: Props) {
             <div>marker size ∝ contracts held</div>
             <div>x-axis = current market implied probability (yes mid)</div>
           </div>
+        </Panel>
+      </div>
+
+      <div className="col-span-12">
+        <Panel
+          title={`Bot Edge${selectedLabel ? " — " + selectedLabel : ""}`}
+          right={
+            <span className="text-[10px] text-term-dim">
+              {botLoading ? "refreshing" : `${botSignals.length} signal${botSignals.length === 1 ? "" : "s"}`}
+            </span>
+          }
+        >
+          <BotEdgeTable
+            positions={filteredPositions}
+            signals={botSignals}
+            loading={botLoading}
+            error={botError}
+          />
         </Panel>
       </div>
 

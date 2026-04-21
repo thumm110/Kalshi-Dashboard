@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { login } from "../lib/api";
+import { API_BASE, login } from "../lib/api";
 
 export function Login({ onOk }: { onOk: () => void }) {
   const [pw, setPw] = useState("");
@@ -10,10 +10,15 @@ export function Login({ onOk }: { onOk: () => void }) {
     e.preventDefault();
     setBusy(true);
     setErr("");
-    const ok = await login(pw);
-    setBusy(false);
-    if (ok) onOk();
-    else setErr("access denied");
+    try {
+      const ok = await login(pw);
+      if (ok) onOk();
+      else setErr("access denied");
+    } catch {
+      setErr(`could not reach dashboard API (${API_BASE || "same-origin"})`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

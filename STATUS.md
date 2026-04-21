@@ -18,6 +18,10 @@ Personal Kalshi trading dashboard. FastAPI + React + Tailwind, polling every 4s.
 - Kalshi v2 client with RSA-PSS request signing
 - `/api/summary` `/api/positions` `/api/fills` `/api/equity-curve`
   `/api/pnl-by-category` `/api/risk` `/api/market-history` `/api/health`
+- `/api/weather-guidance` for NWS station observations plus hourly forecast
+  projection on Kalshi-supported weather locations
+- `/api/bot-signals` reads local weather/econ bot SQLite decisions for model
+  fair value and edge comparison
 - Snapshot loop persists equity history to SQLite
 - Per-position liquidation pricing (yes_bid for YES, 100-yes_ask for NO) —
   matches Kalshi app's displayed "market value"
@@ -26,6 +30,9 @@ Personal Kalshi trading dashboard. FastAPI + React + Tailwind, polling every 4s.
 - US map with city dots (react-simple-maps)
 - Dots color by PnL, pulse on each poll, click to select
 - Per-city 24h price sparklines (Kalshi candlesticks)
+- NWS forecast model table with live high/low, projected settlement value, and
+  rough probability by strike
+- Bot Edge table comparing bot fair probability to live Kalshi implied price
 - By-event-type panel (HIGH / LOW / RAIN / SNOW / HUR / EMERGENCY)
 - Positions table filtered to selected city
 - ±5¢ dead-zone around breakeven to stop red↔gray strobing
@@ -36,7 +43,12 @@ Personal Kalshi trading dashboard. FastAPI + React + Tailwind, polling every 4s.
 - Expandable strike-strip per event: 0–100¢ axis, YES=filled / NO=outline,
   size ∝ contracts, x = implied probability
 - By-macro-series panel (CPI / Fed / Jobs / GDP / Unemployment)
+- Bot Edge table using the econ bot SQLite model outputs
 - Countdown to next release, selected-event filter for positions table
+
+### Remote access
+- Mobile/Tailscale access works through the Vite dev server on `:5173`;
+  browser API calls use same-origin `/api` and Vite proxies to backend `:8000`
 
 ## TODO
 
@@ -60,6 +72,12 @@ Personal Kalshi trading dashboard. FastAPI + React + Tailwind, polling every 4s.
 - [ ] Alerting: push/email when a position moves past a threshold
 - [ ] Pagination: `/portfolio/positions?limit=500` is capped — if user
       holds >500 open, need to page
+
+### Check back
+- [ ] Tighten CORS from `*` to the specific LAN/Tailscale dashboard origins
+- [ ] Replace the simple weather probability with the weather bot ensemble
+      probability once weather `trade_decisions` rows are being logged
+- [ ] Add alerting for high-edge weather/econ positions and exit/trim signals
 
 ### Known issues / quirks
 - `last_updated_ts` from Kalshi only updates on user trades (not market

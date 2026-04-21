@@ -8,11 +8,14 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .bot_signals import fetch_bot_signals
 from .categorize import categorize
 from .config import settings
 from .db import get_snapshots, init_db
 from .kalshi_client import KalshiClient, dollars_to_cents, fp_to_float
 from .snapshot import snapshot_loop
+from .weather_guidance import fetch_weather_guidance
+from .weather_locations import SERIES_TO_WEATHER_LOCATION, WEATHER_LOCATIONS
 
 
 def _position_value_cents(qty: float, market: dict) -> int:
@@ -68,10 +71,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Tanner's Kalshi Diagnostics", lifespan=lifespan)
 
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_allow_all_cors = "*" in _cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-    allow_credentials=True,
+    allow_origins=["*"] if _allow_all_cors else _cors_origins,
+    allow_credentials=not _allow_all_cors,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -316,6 +322,46 @@ async def market_history(
             continue
         points.append({"ts": int(c.get("end_period_ts") or 0), "yes_price_cents": int(val)})
     return {"ticker": ticker, "points": points}
+
+
+@app.get("/api/weather-guidance", dependencies=[Depends(require_auth)])
+async def weather_guidance(tickers: str | None = Query(default=None)):
+    """Live NWS observations for Kalshi-supported weather locations.
+
+    If `tickers` is supplied, returns only locations matching those market
+    tickers. Otherwise returns every configured Kalshi daily-temperature city.
+    """
+    requested: dict[str, Any] = {}
+    if tickers:
+        for ticker in tickers.split(","):
+            series = ticker.strip().split("-")[0]
+            location = SERIES_TO_WEATHER_LOCATION.get(series)
+            if location:
+                requested[location.code] = location
+    else:
+        requested = {location.code: location for location in WEATHER_LOCATIONS}
+
+    locations = sorted(requested.values(), key=lambda loc: loc.code)
+    rows = await fetch_weather_guidance(locations) if locations else []
+    return {
+        "ts": int(time.time()),
+        "locations": rows,
+        "source_note": (
+            "Intraday guidance uses NWS station observations. Kalshi weather markets "
+            "settle from the applicable final NWS climate report/rules source."
+        ),
+    }
+
+
+@app.get("/api/bot-signals", dependencies=[Depends(require_auth)])
+async def bot_signals(tickers: str | None = Query(default=None)):
+    requested = [ticker.strip() for ticker in tickers.split(",")] if tickers else None
+    data = fetch_bot_signals(
+        weather_db_path=settings.weather_bot_db_path,
+        econ_db_path=settings.econ_bot_db_path,
+        tickers=requested,
+    )
+    return {"ts": int(time.time()), **data}
 
 
 @app.get("/api/health")
