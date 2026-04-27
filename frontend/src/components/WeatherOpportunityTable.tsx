@@ -61,7 +61,7 @@ export function WeatherOpportunityTable({
   const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
   const [sideFilter, setSideFilter] = useState<SideFilter>("ALL");
   const [minEdge, setMinEdge] = useState(12);
-  const [minAgreement, setMinAgreement] = useState(3);
+  const [minAgreement, setMinAgreement] = useState(1);
   const [sortBy, setSortBy] = useState<SortKey>("EDGE");
 
   const filtered = useMemo(() => {
@@ -155,7 +155,7 @@ export function WeatherOpportunityTable({
             className="w-20 bg-term-panel border border-term-line px-2 py-1 text-[12px] text-term-text"
             type="number"
             min={0}
-            max={4}
+            max={2}
             step={1}
             value={minAgreement}
             onChange={(event) => setMinAgreement(Number(event.target.value) || 0)}
