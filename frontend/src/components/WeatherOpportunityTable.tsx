@@ -250,7 +250,7 @@ export function WeatherOpportunityTable({
       </div>
 
       <div className="mt-2 text-[10px] text-term-dim">
-        Uses the weather bot’s temperature ensemble logic plus the same spread, volume, open-interest, and close-window filters. Model spread is max minus min across available model probabilities.
+        Optional add-on: uses the weather bot’s temperature ensemble logic when configured. Model spread is max minus min across available model probabilities.
       </div>
     </div>
   );

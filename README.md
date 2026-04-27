@@ -44,6 +44,7 @@ Optional bot add-ons:
 - `WEATHER_BOT_DB_PATH` points at a local weather bot SQLite database.
 - `ECON_BOT_DB_PATH` points at a local economics bot SQLite database.
 - These bot databases are not required for the dashboard. If either path is unset or missing, the corresponding bot signal source reports unavailable and the rest of the app still runs.
+- The Weather Opportunities panel also uses helper code from the optional weather bot. Without that add-on, the panel shows no opportunity rows instead of blocking the dashboard.
 
 You can also start both services from the repository root:
 

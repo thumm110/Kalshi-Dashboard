@@ -27,7 +27,10 @@ _BOT_HELPERS: dict[str, Any] | None = None
 
 
 def _weather_bot_root() -> Path:
-    return Path(settings.weather_bot_db_path).expanduser().resolve().parent
+    configured_path = settings.weather_bot_db_path.strip()
+    if not configured_path:
+        raise RuntimeError("optional weather bot path is not configured")
+    return Path(configured_path).expanduser().resolve().parent
 
 
 def _load_bot_helpers() -> dict[str, Any]:
@@ -43,7 +46,10 @@ def _load_bot_helpers() -> dict[str, Any]:
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
 
-    module = importlib.import_module("weather_trade_candidates")
+    try:
+        module = importlib.import_module("weather_trade_candidates")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("optional weather bot helper module is not available") from exc
     _BOT_HELPERS = {
         "EDGE_THRESHOLD": module.EDGE_THRESHOLD,
         "MAX_SPREAD": module.MAX_SPREAD,
@@ -128,7 +134,18 @@ async def _load_series_markets(client: KalshiClient, series_ticker: str) -> tupl
 
 
 async def _refresh_weather_opportunities(client: KalshiClient) -> dict[str, Any]:
-    helpers = _load_bot_helpers()
+    try:
+        helpers = _load_bot_helpers()
+    except (RuntimeError, AttributeError) as exc:
+        snapshot = {
+            "generated_at": int(time.time()),
+            "expires_at": time.time() + _CACHE_TTL_SECONDS,
+            "rows": [],
+            "errors": [f"weather opportunities unavailable: {exc}"],
+        }
+        _CACHE.update(snapshot)
+        return snapshot
+
     now_utc = time.time()
     semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
 
@@ -349,7 +366,7 @@ async def fetch_weather_opportunities(
     limit: int = 250,
     sort: str = "edge",
 ) -> dict[str, Any]:
-    cached = _CACHE if _CACHE["expires_at"] > time.time() and _CACHE["rows"] else None
+    cached = _CACHE if _CACHE["expires_at"] > time.time() and (_CACHE["rows"] or _CACHE["errors"]) else None
     snapshot = cached or await _refresh_weather_opportunities(client)
     rows = _apply_filters(
         snapshot["rows"],
