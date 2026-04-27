@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     snapshot_interval_seconds: int = 30
     db_path: str = "./kalshi_dashboard.db"
     cors_origins: str = "*"
-    weather_bot_db_path: str = "/home/thumm/Desktop/predict-and-profit-v2/weather-bot/predict_and_profit.db"
-    econ_bot_db_path: str = "/home/thumm/Desktop/predict-and-profit-v2/econ-bot/kalshi_econ_trading.db"
+    weather_bot_db_path: str = ""
+    econ_bot_db_path: str = ""
 
 
 settings = Settings()

@@ -4,9 +4,13 @@ import { PositionsTable } from "../components/PositionsTable";
 import { WeatherMap } from "../components/WeatherMap";
 import { CityCharts } from "../components/CityCharts";
 import { WeatherGuidance } from "../components/WeatherGuidance";
+import { AllCitiesWeather } from "../components/AllCitiesWeather";
 import { BotEdgeTable } from "../components/BotEdgeTable";
+import { CategoryPnlPanel } from "../components/CategoryPnlPanel";
+import { EnsembleRunPanel } from "../components/EnsembleRunPanel";
+import { WeatherOpportunityTable } from "../components/WeatherOpportunityTable";
 import { CITIES, cityForTicker, eventKindFromSeries, seriesFromTicker } from "../lib/cities";
-import { api, fmtUsd, type BotSignal, type Position, type WeatherGuidanceLocation } from "../lib/api";
+import { api, fmtUsd, type BotSignal, type Position, type WeatherGuidanceLocation, type WeatherOpportunity } from "../lib/api";
 
 type Props = {
   positions: Position[];
@@ -21,6 +25,10 @@ export function WeatherPage({ positions, pulseKey }: Props) {
   const [botSignals, setBotSignals] = useState<BotSignal[]>([]);
   const [botError, setBotError] = useState<string | null>(null);
   const [botLoading, setBotLoading] = useState(false);
+  const [opportunities, setOpportunities] = useState<WeatherOpportunity[]>([]);
+  const [opportunitiesGeneratedAt, setOpportunitiesGeneratedAt] = useState<number | null>(null);
+  const [opportunitiesError, setOpportunitiesError] = useState<string | null>(null);
+  const [opportunitiesLoading, setOpportunitiesLoading] = useState(false);
 
   const weatherPositions = useMemo(
     () => positions.filter((p) => cityForTicker(p.ticker) !== null),
@@ -40,7 +48,7 @@ export function WeatherPage({ positions, pulseKey }: Props) {
     async function load() {
       setGuidanceLoading(true);
       try {
-        const data = await api.weatherGuidance(guidanceTickers);
+        const data = await api.weatherGuidance();
         if (!alive) return;
         setGuidance(data.locations);
         setGuidanceError(null);
@@ -58,7 +66,7 @@ export function WeatherPage({ positions, pulseKey }: Props) {
       alive = false;
       window.clearInterval(id);
     };
-  }, [guidanceKey]);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -91,6 +99,34 @@ export function WeatherPage({ positions, pulseKey }: Props) {
     };
   }, [guidanceKey]);
 
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      setOpportunitiesLoading(true);
+      try {
+        const data = await api.weatherOpportunities();
+        if (!alive) return;
+        setOpportunities(data.rows);
+        setOpportunitiesGeneratedAt(data.generated_at);
+        setOpportunitiesError(null);
+      } catch (err) {
+        if (!alive) return;
+        setOpportunitiesError(err instanceof Error ? err.message : "weather opportunities failed");
+      } finally {
+        if (alive) setOpportunitiesLoading(false);
+      }
+    }
+
+    load();
+    const id = window.setInterval(load, 120000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
   const filteredPositions = useMemo(() => {
     if (!selectedCity) return weatherPositions;
     return weatherPositions.filter((p) => cityForTicker(p.ticker)?.code === selectedCity);
@@ -117,6 +153,9 @@ export function WeatherPage({ positions, pulseKey }: Props) {
 
   return (
     <main className="p-3 grid grid-cols-12 gap-3">
+      <div className="col-span-12">
+        <CategoryPnlPanel category="Weather" />
+      </div>
       <div className="col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           label="Weather PnL"
@@ -208,6 +247,51 @@ export function WeatherPage({ positions, pulseKey }: Props) {
               <span className="text-term-dim shrink-0">CLI only</span>
             </div>
           </div>
+        </Panel>
+      </div>
+
+      <div className="col-span-12">
+        <EnsembleRunPanel />
+      </div>
+
+      <div className="col-span-12">
+        <Panel
+          title="Live Weather — All Kalshi Cities"
+          right={
+            <span className="text-[10px] text-term-dim">
+              {guidanceLoading ? "refreshing" : `${guidance.length} cit${guidance.length === 1 ? "y" : "ies"}`}
+              <span className="mx-2">·</span>
+              NWS obs + hourly forecast
+            </span>
+          }
+        >
+          <AllCitiesWeather
+            locations={guidance}
+            loading={guidanceLoading}
+            error={guidanceError}
+            selectedCity={selectedCity}
+            onSelectCity={setSelectedCity}
+          />
+        </Panel>
+      </div>
+
+
+      <div className="col-span-12">
+        <Panel
+          title={`Weather Opportunities${selected ? " — " + selected.name : ""}`}
+          right={
+            <span className="text-[10px] text-term-dim">
+              {opportunitiesLoading ? "refreshing" : `${opportunities.length} row${opportunities.length === 1 ? "" : "s"}`}
+            </span>
+          }
+        >
+          <WeatherOpportunityTable
+            rows={opportunities}
+            loading={opportunitiesLoading}
+            error={opportunitiesError}
+            selectedCity={selectedCity}
+            generatedAt={opportunitiesGeneratedAt}
+          />
         </Panel>
       </div>
 

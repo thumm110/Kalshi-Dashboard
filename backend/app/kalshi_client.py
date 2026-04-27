@@ -76,8 +76,49 @@ class KalshiClient:
     async def get_balance(self) -> dict[str, Any]:
         return await self._get("/portfolio/balance")
 
-    async def get_positions(self, limit: int = 200) -> dict[str, Any]:
-        return await self._get("/portfolio/positions", params={"limit": limit})
+    async def get_positions(
+        self,
+        limit: int = 200,
+        cursor: str | None = None,
+        count_filter: str | None = None,
+        settlement_status: str | None = None,
+        ticker: str | None = None,
+        event_ticker: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if count_filter:
+            params["count_filter"] = count_filter
+        if settlement_status:
+            params["settlement_status"] = settlement_status
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        return await self._get("/portfolio/positions", params=params)
+
+    async def get_settlements(
+        self,
+        limit: int = 100,
+        cursor: str | None = None,
+        ticker: str | None = None,
+        event_ticker: str | None = None,
+        min_ts: int | None = None,
+        max_ts: int | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if min_ts is not None:
+            params["min_ts"] = min_ts
+        if max_ts is not None:
+            params["max_ts"] = max_ts
+        return await self._get("/portfolio/settlements", params=params)
 
     async def get_fills(self, limit: int = 100) -> dict[str, Any]:
         return await self._get("/portfolio/fills", params={"limit": limit})
@@ -87,6 +128,29 @@ class KalshiClient:
 
     async def get_market(self, ticker: str) -> dict[str, Any]:
         return await self._get(f"/markets/{ticker}")
+
+    async def get_event(self, event_ticker: str, with_nested_markets: bool = True) -> dict[str, Any]:
+        params = {"with_nested_markets": str(with_nested_markets).lower()}
+        return await self._get(f"/events/{event_ticker}", params=params)
+
+    async def list_events(
+        self,
+        limit: int = 200,
+        cursor: str | None = None,
+        status: str | None = None,
+        series_ticker: str | None = None,
+        with_nested_markets: bool = False,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if status:
+            params["status"] = status
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if with_nested_markets:
+            params["with_nested_markets"] = "true"
+        return await self._get("/events", params=params)
 
     async def get_candlesticks(
         self, series_ticker: str, ticker: str, start_ts: int, end_ts: int, period_minutes: int

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BotEdgeTable } from "../components/BotEdgeTable";
+import { CategoryPnlPanel } from "../components/CategoryPnlPanel";
 import { KpiCard, Panel } from "../components/KpiCard";
 import { PositionsTable } from "../components/PositionsTable";
 import { ReleaseTimeline } from "../components/ReleaseTimeline";
@@ -89,6 +90,9 @@ export function EconomicsPage({ positions }: Props) {
 
   return (
     <main className="p-3 grid grid-cols-12 gap-3">
+      <div className="col-span-12">
+        <CategoryPnlPanel category="Economics" />
+      </div>
       <div className="col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           label="Economics PnL"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AttentionStrip } from "./components/AttentionStrip";
 import { Banner } from "./components/Banner";
 import { CategoryBar } from "./components/CategoryBar";
 import { CategoryBreakdown } from "./components/CategoryBreakdown";
@@ -8,21 +9,31 @@ import { Heatmap } from "./components/Heatmap";
 import { KpiCard, Panel } from "./components/KpiCard";
 import { Login } from "./components/Login";
 import { PositionsTable } from "./components/PositionsTable";
+import { Scorecard } from "./components/Scorecard";
+import { SettlementsPanel } from "./components/SettlementsPanel";
+import { TrackRecord } from "./components/TrackRecord";
 import { WeatherPage } from "./pages/WeatherPage";
 import { EconomicsPage } from "./pages/EconomicsPage";
+import { PoliticsPage } from "./pages/PoliticsPage";
+import { SportsPage } from "./pages/SportsPage";
 import {
   api,
   fmtUsd,
   hasCreds,
+  type AttentionResponse,
   type CategoryPnl,
   type EquityPoint,
   type Fill,
   type Position,
   type Risk,
+  type Scorecard as ScorecardData,
+  type Settlement,
   type Summary,
+  type TrackRecord as TrackRecordData,
 } from "./lib/api";
 
 const POLL_MS = 4000;
+const ANALYTICS_POLL_MS = 15000;
 const CATEGORIES = ["All", "Weather", "Crypto", "Sports", "Politics", "Economics", "Entertainment", "Other"];
 
 export function App() {
@@ -32,9 +43,14 @@ export function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [fills, setFills] = useState<Fill[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [settlementTotal, setSettlementTotal] = useState(0);
   const [equity, setEquity] = useState<EquityPoint[]>([]);
   const [catPnl, setCatPnl] = useState<CategoryPnl[]>([]);
   const [risk, setRisk] = useState<Risk | null>(null);
+  const [scorecard, setScorecard] = useState<ScorecardData | null>(null);
+  const [trackRecord, setTrackRecord] = useState<TrackRecordData | null>(null);
+  const [attention, setAttention] = useState<AttentionResponse | null>(null);
 
   const [pulseKey, setPulseKey] = useState(0);
   const [lastPoll, setLastPoll] = useState<number | null>(null);
@@ -43,10 +59,11 @@ export function App() {
 
   const poll = useCallback(async () => {
     try {
-      const [s, p, f, e, c, r] = await Promise.all([
+      const [s, p, f, st, e, c, r] = await Promise.all([
         api.summary(),
         api.positions(category),
         api.fills(30),
+        api.settlements("today", 30),
         api.equityCurve(),
         api.pnlByCategory(),
         api.risk(),
@@ -55,6 +72,8 @@ export function App() {
       setSummary(s);
       setPositions(p.positions);
       setFills(f.fills);
+      setSettlements(st.settlements);
+      setSettlementTotal(st.total_pnl_cents);
       setEquity(e.points);
       setCatPnl(c.categories);
       setRisk(r);
@@ -68,16 +87,32 @@ export function App() {
     }
   }, [category]);
 
+  const pollAnalytics = useCallback(async () => {
+    try {
+      const [sc, tr, at] = await Promise.all([api.scorecard(), api.trackRecord(), api.attention()]);
+      if (!mounted.current) return;
+      setScorecard(sc);
+      setTrackRecord(tr);
+      setAttention(at);
+    } catch (err) {
+      if (!mounted.current) return;
+      console.warn("analytics poll failed", err);
+    }
+  }, []);
+
   useEffect(() => {
     if (!authed) return;
     mounted.current = true;
     poll();
+    pollAnalytics();
     const id = setInterval(poll, POLL_MS);
+    const aid = setInterval(pollAnalytics, ANALYTICS_POLL_MS);
     return () => {
       mounted.current = false;
       clearInterval(id);
+      clearInterval(aid);
     };
-  }, [authed, poll]);
+  }, [authed, poll, pollAnalytics]);
 
   const displayedPositions = useMemo(
     () => (category === "All" ? positions : positions.filter((p) => p.category === category)),
@@ -86,8 +121,14 @@ export function App() {
 
   if (!authed) return <Login onOk={() => setAuthed(true)} />;
 
-  const dayPnl = summary ? summary.total_pnl_cents : 0;
+  const dayPnl = summary ? summary.today_pnl_cents ?? summary.total_pnl_cents : 0;
+  const allTimePnl = summary ? summary.all_time_pnl_cents ?? summary.total_pnl_cents : 0;
   const unrealized = summary ? summary.unrealized_cents : 0;
+  const realizedSub = summary
+    ? summary.settlement_pnl_cents
+      ? `realized ${fmtUsd(summary.realized_cents, true)} incl settled ${fmtUsd(summary.settlement_pnl_cents, true)}`
+      : `realized ${fmtUsd(summary.realized_cents, true)}`
+    : "";
 
   return (
     <div className="min-h-screen">
@@ -96,15 +137,30 @@ export function App() {
 
       {category === "Weather" && <WeatherPage positions={positions} pulseKey={pulseKey} />}
       {category === "Economics" && <EconomicsPage positions={positions} />}
-      {category !== "Weather" && category !== "Economics" && (
+      {category === "Politics" && <PoliticsPage positions={positions} />}
+      {category === "Sports" && <SportsPage positions={positions} />}
+      {category !== "Weather" && category !== "Economics" && category !== "Politics" && category !== "Sports" && (
+      <>
+      {attention && attention.chips.length > 0 && <AttentionStrip chips={attention.chips} />}
       <main className="p-3 grid grid-cols-12 gap-3">
+        {/* Scorecard at top */}
+        <div className="col-span-12">
+          <Scorecard data={scorecard} />
+        </div>
+
         {/* KPI row */}
-        <div className="col-span-12 grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div className="col-span-12 grid grid-cols-2 md:grid-cols-7 gap-3">
           <KpiCard
-            label="Total PnL"
-            value={summary ? fmtUsd(summary.total_pnl_cents, true) : "—"}
+            label="Today PnL"
+            value={summary ? fmtUsd(dayPnl, true) : "—"}
             tone={dayPnl >= 0 ? "pos" : "neg"}
-            sub={summary ? `realized ${fmtUsd(summary.realized_cents, true)}` : ""}
+            sub={realizedSub}
+          />
+          <KpiCard
+            label="All-Time PnL"
+            value={summary ? fmtUsd(allTimePnl, true) : "—"}
+            tone={allTimePnl >= 0 ? "pos" : "neg"}
+            sub={summary ? `settled ${fmtUsd(summary.all_time_settlement_pnl_cents ?? 0, true)}` : ""}
           />
           <KpiCard
             label="Unrealized"
@@ -159,9 +215,12 @@ export function App() {
             <PositionsTable positions={displayedPositions} />
           </Panel>
         </div>
-        <div className="col-span-12 lg:col-span-4">
+        <div className="col-span-12 lg:col-span-4 space-y-3">
           <Panel title="Recent Fills">
             <FillsFeed fills={fills} />
+          </Panel>
+          <Panel title="Settlements">
+            <SettlementsPanel settlements={settlements} totalPnl={settlementTotal} />
           </Panel>
         </div>
 
@@ -171,7 +230,13 @@ export function App() {
             <Heatmap positions={displayedPositions} />
           </Panel>
         </div>
+
+        {/* Track Record (settled history by series) */}
+        <div className="col-span-12">
+          <TrackRecord data={trackRecord} />
+        </div>
       </main>
+      </>
       )}
 
       <footer className="px-3 py-2 text-[10px] text-term-dim border-t border-term-line flex justify-between">

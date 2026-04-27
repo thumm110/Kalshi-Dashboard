@@ -7,7 +7,7 @@ refine over time as we discover new series.
 CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("Weather",  ("KXHIGH", "KXLOW", "KXTEMP", "KXDV", "HIGH", "LOW", "TEMP", "RAIN", "SNOW", "HURRICANE")),
     ("Crypto",   ("KXBTC", "KXETH", "BTC", "ETH", "CRYPTO")),
-    ("Sports",   ("KXNFL", "KXNBA", "KXMLB", "KXNHL", "KXUFC", "NFL", "NBA", "MLB", "NHL", "UFC", "NCAA", "PGA", "TEN")),
+    ("Sports",   ("KXNFL", "KXNBA", "KXMLB", "KXNHL", "KXUFC", "KXMLS", "KXUCL", "KXMOTOGP", "KXNASCAR", "KXF1", "KXMARMAD", "KXWMARMAD", "KXWNBA", "KXPGA", "KXCOACHOUT", "KXMVESPORTS", "MVESPORTS", "NFL", "NBA", "MLB", "NHL", "UFC", "NCAA", "PGA", "TEN", "MLS", "F1", "NASCAR")),
     ("Politics", ("PRES", "GOV", "SEN", "HOUSE", "ELECT", "POTUS", "KXPRES")),
     ("Economics",("CPI", "FED", "GDP", "JOBS", "KXFED", "KXCPI", "KXGDP", "UNEMP", "KXECONSTAT")),
     ("Entertainment", ("KXOSCAR", "KXEMMY", "KXGRAMMY", "OSCAR", "EMMY", "GRAMMY", "BOX", "MOVIE")),

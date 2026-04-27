@@ -5,6 +5,7 @@ import time
 
 from .db import insert_snapshot
 from .kalshi_client import KalshiClient, dollars_to_cents, fp_to_float
+from .pnl import get_settlements_since, iso_ts, local_day_start_ts, settlement_pnl_cents
 
 log = logging.getLogger(__name__)
 
@@ -17,15 +18,21 @@ async def take_snapshot(client: KalshiClient, db_path: str) -> dict:
     portfolio_value = int(balance.get("portfolio_value", 0) or 0)
     market_positions = positions.get("market_positions", []) or []
 
-    total_realized = 0
+    day_start_ts = local_day_start_ts()
+    total_realized = sum(
+        dollars_to_cents(p.get("realized_pnl_dollars"))
+        for p in market_positions
+        if (iso_ts(p.get("last_updated_ts")) or 0) >= day_start_ts
+    )
     total_exposure = 0
     count = 0
     for p in market_positions:
         if fp_to_float(p.get("position_fp")) == 0:
             continue
         count += 1
-        total_realized += dollars_to_cents(p.get("realized_pnl_dollars"))
         total_exposure += dollars_to_cents(p.get("market_exposure_dollars"))
+    settlements = await get_settlements_since(client, day_start_ts)
+    total_realized += sum(settlement_pnl_cents(s) for s in settlements)
     total_unrealized = portfolio_value - total_exposure
 
     ts = int(time.time())

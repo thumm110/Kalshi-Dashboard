@@ -24,8 +24,8 @@ else
       python3 -m venv .venv
       .venv/bin/pip install -q -r requirements.txt
     fi
-    nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-      > backend.log 2>&1 &
+    nohup setsid .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+      > backend.log 2>&1 < /dev/null &
     echo $! > ../.pids/backend.pid
   )
   echo "  pid $(cat .pids/backend.pid) → backend/backend.log"
@@ -43,7 +43,7 @@ else
       npm install --silent
     fi
     # --host exposes vite on LAN/Tailscale interfaces
-    nohup npm run dev -- --host 0.0.0.0 > frontend.log 2>&1 &
+    nohup setsid npm run dev -- --host 0.0.0.0 > frontend.log 2>&1 < /dev/null &
     echo $! > ../.pids/frontend.pid
   )
   echo "  pid $(cat .pids/frontend.pid) → frontend/frontend.log"
