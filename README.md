@@ -44,7 +44,6 @@ Optional bot add-ons:
 - `WEATHER_BOT_DB_PATH` points at a local weather bot SQLite database.
 - `ECON_BOT_DB_PATH` points at a local economics bot SQLite database.
 - These bot databases are not required for the dashboard. If either path is unset or missing, the corresponding bot signal source reports unavailable and the rest of the app still runs.
-- The Weather Opportunities panel also uses helper code from the optional weather bot. Without that add-on, the panel shows no opportunity rows instead of blocking the dashboard.
 
 You can also start both services from the repository root:
 
@@ -70,7 +69,7 @@ All endpoints require `X-Dashboard-Password` header.
 - `GET  /api/pnl-by-category` — grouped PnL by inferred category
 - `GET  /api/pnl/summary` and `/api/pnl/category/{name}` — cached settlement rollups
 - `GET  /api/scorecard`, `/api/track-record`, `/api/attention` — portfolio analytics
-- `GET  /api/weather-guidance`, `/api/weather/opportunities`, `/api/ensemble/*` — weather tools
+- `GET  /api/weather-guidance`, `/api/weather/opportunities`, `/api/ensemble/*` — dashboard-native weather tools
 - `GET  /api/politics/*`, `/api/sports/*`, `/api/nhl/scores`, `/api/nba/scores`, `/api/mlb/scores`, `/api/golf/leaderboard` — market/news/scoreboard views
 - `GET  /api/risk` — worst-case / best-case exposure
 - `GET  /api/health` — unauthenticated health check

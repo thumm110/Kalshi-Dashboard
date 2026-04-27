@@ -1,71 +1,92 @@
-"""Dashboard opportunities feed for Kalshi HIGH/LOW weather markets."""
+"""Dashboard-native opportunities feed for Kalshi HIGH/LOW weather markets."""
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
-import sys
+import re
 import time
-from pathlib import Path
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from .config import settings
+from .ensemble import fetch_ensemble, probability_for_threshold
 from .kalshi_client import KalshiClient
-from .weather_locations import SERIES_TO_WEATHER_LOCATION, WEATHER_LOCATIONS
+from .weather_locations import SERIES_TO_WEATHER_LOCATION, WEATHER_LOCATIONS, WeatherLocation
 
 log = logging.getLogger("kalshi-dashboard.weather-opportunities")
 
 _CACHE_TTL_SECONDS = 180
 _FETCH_CONCURRENCY = 4
+_ENSEMBLE_CONCURRENCY = 5
+_MIN_CLOSE_HOURS = 2
+_MAX_CLOSE_HOURS = 48
+_MAX_SPREAD = 0.15
+_MIN_VOLUME = 0.0
+_MIN_OPEN_INTEREST = 0.0
 _CACHE: dict[str, Any] = {
     "expires_at": 0.0,
     "generated_at": 0,
     "rows": [],
     "errors": [],
 }
-_BOT_HELPERS: dict[str, Any] | None = None
+
+_MONTH_ABBR: dict[str, int] = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
+_TICKER_DATE_RE = re.compile(r"-(\d{2})([A-Z]{3})(\d{2})-")
+_TEMP_RANGE_PATTERN = re.compile(r"\b(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*°?")
+_TEMP_THRESHOLD_PATTERN = re.compile(r"([<>])\s*(\d+(?:\.\d+)?)\s*°?")
+_TEMP_WORD_PATTERN = re.compile(r"\b(over|above|under|below)\s+(\d+(?:\.\d+)?)\s*°?")
 
 
-def _weather_bot_root() -> Path:
-    configured_path = settings.weather_bot_db_path.strip()
-    if not configured_path:
-        raise RuntimeError("optional weather bot path is not configured")
-    return Path(configured_path).expanduser().resolve().parent
-
-
-def _load_bot_helpers() -> dict[str, Any]:
-    global _BOT_HELPERS
-    if _BOT_HELPERS is not None:
-        return _BOT_HELPERS
-
-    root = _weather_bot_root()
-    if not root.exists():
-        raise RuntimeError(f"weather bot directory not found: {root}")
-
-    root_str = str(root)
-    if root_str not in sys.path:
-        sys.path.insert(0, root_str)
-
+def _parse_iso8601(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
     try:
-        module = importlib.import_module("weather_trade_candidates")
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("optional weather bot helper module is not available") from exc
-    _BOT_HELPERS = {
-        "EDGE_THRESHOLD": module.EDGE_THRESHOLD,
-        "MAX_SPREAD": module.MAX_SPREAD,
-        "MIN_OPEN_INTEREST": module.MIN_OPEN_INTEREST,
-        "MIN_VOLUME": module.MIN_VOLUME,
-        "closes_between_2_and_48_hours": module.closes_between_2_and_48_hours,
-        "extract_temperature_contract": module.extract_temperature_contract,
-        "is_active_market": module.is_active_market,
-        "market_midpoint_probability": module.market_midpoint_probability,
-        "market_spread": module.market_spread,
-        "parse_iso8601": module.parse_iso8601,
-        "parse_number": module.parse_number,
-        "parse_price": module.parse_price,
-        "try_ensemble_for_market": module._try_ensemble_for_market,
-    }
-    return _BOT_HELPERS
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_price(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        price = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if price > 1.0:
+        price = price / 100.0
+    if price < 0.0 or price > 1.0:
+        return None
+    return price
+
+
+def _parse_number(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _market_kind_from_series(series_ticker: str) -> str | None:
@@ -87,6 +108,78 @@ def _normalize_city_code(city: str | None) -> str | None:
         if location.code == normalized or location.name.upper() == normalized:
             return location.code
     return normalized
+
+
+def _is_active_market(market: dict[str, Any]) -> bool:
+    status = str(market.get("status") or "").strip().lower()
+    return status in {"active", "open", ""}
+
+
+def _closes_in_window(close_time: datetime | None, now_utc: datetime) -> bool:
+    if close_time is None:
+        return False
+    return now_utc + timedelta(hours=_MIN_CLOSE_HOURS) <= close_time <= now_utc + timedelta(hours=_MAX_CLOSE_HOURS)
+
+
+def _market_midpoint_probability(market: dict[str, Any]) -> float | None:
+    yes_bid = _parse_price(market.get("yes_bid_dollars") if market.get("yes_bid_dollars") is not None else market.get("yes_bid"))
+    yes_ask = _parse_price(market.get("yes_ask_dollars") if market.get("yes_ask_dollars") is not None else market.get("yes_ask"))
+    if yes_bid is not None and yes_ask is not None:
+        return (yes_bid + yes_ask) / 2.0
+    last_price = _parse_price(market.get("last_price_dollars") if market.get("last_price_dollars") is not None else market.get("last_price"))
+    return last_price
+
+
+def _market_spread(market: dict[str, Any]) -> float | None:
+    yes_bid = _parse_price(market.get("yes_bid_dollars") if market.get("yes_bid_dollars") is not None else market.get("yes_bid"))
+    yes_ask = _parse_price(market.get("yes_ask_dollars") if market.get("yes_ask_dollars") is not None else market.get("yes_ask"))
+    if yes_bid is None or yes_ask is None:
+        return None
+    return max(0.0, yes_ask - yes_bid)
+
+
+def _extract_temperature_contract(market: dict[str, Any], market_kind: str) -> tuple[str, float] | None:
+    texts = [
+        str(market.get("title") or ""),
+        str(market.get("subtitle") or market.get("sub_title") or ""),
+        str(market.get("ticker") or ""),
+    ]
+    for text in texts:
+        if _TEMP_RANGE_PATTERN.search(text):
+            return None
+
+    for text in texts:
+        match = _TEMP_THRESHOLD_PATTERN.search(text)
+        if match is not None:
+            operator = match.group(1)
+            threshold = float(match.group(2))
+            if market_kind == "HIGH":
+                return ("gt", threshold) if operator == ">" else ("lt", threshold)
+            return ("lt", threshold) if operator == "<" else ("gt", threshold)
+
+        word_match = _TEMP_WORD_PATTERN.search(text.lower())
+        if word_match is not None:
+            word = word_match.group(1)
+            threshold = float(word_match.group(2))
+            if word in {"over", "above"}:
+                return "gt", threshold
+            if word in {"under", "below"}:
+                return "lt", threshold
+    return None
+
+
+def _ticker_forecast_date(ticker: str) -> date | None:
+    match = _TICKER_DATE_RE.search(ticker or "")
+    if match is None:
+        return None
+    year_2d, month_abbr, day_str = match.group(1), match.group(2), match.group(3)
+    month = _MONTH_ABBR.get(month_abbr.upper())
+    if month is None:
+        return None
+    try:
+        return date(2000 + int(year_2d), month, int(day_str))
+    except ValueError:
+        return None
 
 
 async def _load_series_markets(client: KalshiClient, series_ticker: str) -> tuple[list[dict[str, Any]], list[str]]:
@@ -133,21 +226,74 @@ async def _load_series_markets(client: KalshiClient, series_ticker: str) -> tupl
     return markets, errors
 
 
-async def _refresh_weather_opportunities(client: KalshiClient) -> dict[str, Any]:
-    try:
-        helpers = _load_bot_helpers()
-    except (RuntimeError, AttributeError) as exc:
-        snapshot = {
-            "generated_at": int(time.time()),
-            "expires_at": time.time() + _CACHE_TTL_SECONDS,
-            "rows": [],
-            "errors": [f"weather opportunities unavailable: {exc}"],
-        }
-        _CACHE.update(snapshot)
-        return snapshot
+async def _ensemble_for_market(
+    *,
+    location: WeatherLocation,
+    forecast_date: date,
+    market_kind: str,
+    threshold_kind: str,
+    threshold: float,
+    semaphore: asyncio.Semaphore,
+) -> dict[str, Any] | None:
+    direction = "above" if threshold_kind == "gt" else "below"
+    member_mode = "member_highs" if market_kind == "HIGH" else "member_lows"
+    model_probs: dict[str, float | None] = {"gfs": None, "ecmwf": None}
+    member_count = 0
+    all_members: list[float] = []
 
-    now_utc = time.time()
-    semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
+    async def fetch_model(model_key: str) -> None:
+        nonlocal member_count
+        async with semaphore:
+            try:
+                result = await fetch_ensemble(
+                    model_key=model_key,
+                    location_key=location.code.lower(),
+                    latitude=location.lat,
+                    longitude=location.lng,
+                    timezone_name=location.timezone,
+                    forecast_date=forecast_date,
+                )
+            except Exception as exc:
+                log.info("ensemble %s failed for %s %s: %s", model_key, location.code, forecast_date, exc)
+                return
+        members = [float(value) for value in result.get(member_mode, []) if value is not None]
+        if not members:
+            return
+        model_probs[model_key] = probability_for_threshold(members, threshold, direction)
+        member_count += len(members)
+        all_members.extend(members)
+
+    await asyncio.gather(fetch_model("gfs"), fetch_model("ecmwf"))
+
+    available = [(name, prob) for name, prob in model_probs.items() if prob is not None]
+    if not available:
+        return None
+
+    fair_yes = sum(float(prob) for _, prob in available) / len(available)
+    grand_yes = fair_yes > 0.5
+    agreement_count = sum(1 for _, prob in available if (float(prob) > 0.5) == grand_yes)
+    confidence = abs(fair_yes - 0.5) * 2.0
+    if all_members:
+        hits = sum(1 for value in all_members if (value > threshold if direction == "above" else value < threshold))
+        confidence = abs((hits / len(all_members)) - 0.5) * 2.0
+
+    return {
+        "probability": fair_yes,
+        "confidence": confidence,
+        "member_count": member_count,
+        "agreement_count": agreement_count,
+        "available_count": len(available),
+        "gfs_prob": model_probs["gfs"],
+        "aigefs_prob": None,
+        "ecmwf_prob": model_probs["ecmwf"],
+        "aifs_prob": None,
+    }
+
+
+async def _refresh_weather_opportunities(client: KalshiClient) -> dict[str, Any]:
+    now_dt = datetime.now(timezone.utc)
+    fetch_semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
+    ensemble_semaphore = asyncio.Semaphore(_ENSEMBLE_CONCURRENCY)
 
     series_to_scan = sorted(
         {
@@ -159,139 +305,125 @@ async def _refresh_weather_opportunities(client: KalshiClient) -> dict[str, Any]
     )
 
     async def load_one(series_ticker: str) -> tuple[str, list[dict[str, Any]], list[str]]:
-        async with semaphore:
+        async with fetch_semaphore:
             markets, errors = await _load_series_markets(client, series_ticker)
             return series_ticker, markets, errors
 
     series_results = await asyncio.gather(*(load_one(series) for series in series_to_scan))
 
-    ensemble_cache: dict[Any, Any] = {}
-    hgefs_cache: dict[Any, Any] = {}
-    ecmwf_cache: dict[Any, Any] = {}
-    aifs_cache: dict[Any, Any] = {}
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
-    now_dt = helpers["parse_iso8601"](time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now_utc)))
-    if now_dt is None:
-        raise RuntimeError("failed to compute current UTC time")
 
+    async def build_row(
+        series_ticker: str,
+        market: dict[str, Any],
+        location: WeatherLocation,
+        market_kind: str,
+    ) -> dict[str, Any] | None:
+        if not _is_active_market(market):
+            return None
+
+        close_time = _parse_iso8601(market.get("close_time"))
+        if not _closes_in_window(close_time, now_dt):
+            return None
+
+        midpoint = _market_midpoint_probability(market)
+        spread = _market_spread(market)
+        contract = _extract_temperature_contract(market, market_kind)
+        volume = _parse_number(market.get("volume") or market.get("volume_fp") or market.get("volume_24h"))
+        open_interest = _parse_number(market.get("open_interest") or market.get("open_interest_fp"))
+        if midpoint is None or spread is None or contract is None or close_time is None:
+            return None
+        if spread > _MAX_SPREAD or volume < _MIN_VOLUME or open_interest < _MIN_OPEN_INTEREST:
+            return None
+
+        threshold_kind, threshold = contract
+        forecast_date = _ticker_forecast_date(str(market.get("ticker") or "")) or close_time.date()
+        ensemble = await _ensemble_for_market(
+            location=location,
+            forecast_date=forecast_date,
+            market_kind=market_kind,
+            threshold_kind=threshold_kind,
+            threshold=threshold,
+            semaphore=ensemble_semaphore,
+        )
+        if ensemble is None:
+            return None
+
+        fair_yes = float(ensemble["probability"])
+        yes_bid = _parse_price(market.get("yes_bid_dollars") or market.get("yes_bid"))
+        yes_ask = _parse_price(market.get("yes_ask_dollars") or market.get("yes_ask"))
+        no_bid = _parse_price(market.get("no_bid_dollars") or market.get("no_bid"))
+        no_ask = _parse_price(market.get("no_ask_dollars") or market.get("no_ask"))
+        no_mid = ((no_bid + no_ask) / 2.0) if no_bid is not None and no_ask is not None else None
+        yes_edge = fair_yes - midpoint
+        no_edge = ((1.0 - fair_yes) - no_mid) if no_mid is not None else float("-inf")
+        if yes_edge >= no_edge:
+            recommended_side = "YES"
+            trade_edge = yes_edge
+        else:
+            recommended_side = "NO"
+            trade_edge = no_edge
+
+        model_probs = [
+            ensemble.get("gfs_prob"),
+            ensemble.get("aigefs_prob"),
+            ensemble.get("ecmwf_prob"),
+            ensemble.get("aifs_prob"),
+        ]
+        available_probs = [float(prob) for prob in model_probs if prob is not None]
+        disagreement_spread = max(available_probs) - min(available_probs) if len(available_probs) >= 2 else 0.0
+
+        return {
+            "ticker": str(market.get("ticker") or ""),
+            "title": market.get("title"),
+            "series_ticker": series_ticker,
+            "event_ticker": market.get("event_ticker"),
+            "city_code": location.code,
+            "city_name": location.name,
+            "market_kind": market_kind,
+            "strike_label": f"{'>' if threshold_kind == 'gt' else '<'}{threshold:g}°",
+            "threshold": threshold,
+            "threshold_kind": threshold_kind,
+            "close_time": close_time.isoformat(),
+            "kalshi_yes_bid": yes_bid,
+            "kalshi_yes_ask": yes_ask,
+            "kalshi_yes_mid": midpoint,
+            "kalshi_no_bid": no_bid,
+            "kalshi_no_ask": no_ask,
+            "kalshi_no_mid": no_mid,
+            "fair_yes": fair_yes,
+            "yes_edge": yes_edge,
+            "trade_edge": trade_edge,
+            "recommended_side": recommended_side,
+            "confidence": ensemble.get("confidence"),
+            "member_count": ensemble.get("member_count"),
+            "agreement_count": ensemble.get("agreement_count"),
+            "available_model_count": ensemble.get("available_count") or len(available_probs),
+            "gfs_prob": ensemble.get("gfs_prob"),
+            "aigefs_prob": ensemble.get("aigefs_prob"),
+            "ecmwf_prob": ensemble.get("ecmwf_prob"),
+            "aifs_prob": ensemble.get("aifs_prob"),
+            "disagreement_spread": disagreement_spread,
+            "spread": spread,
+            "volume": volume,
+            "open_interest": open_interest,
+        }
+
+    row_tasks: list[asyncio.Task[dict[str, Any] | None]] = []
     for series_ticker, markets, series_errors in series_results:
         errors.extend(series_errors)
         location = SERIES_TO_WEATHER_LOCATION.get(series_ticker)
         market_kind = _market_kind_from_series(series_ticker)
         if location is None or market_kind is None:
             continue
-
-        scan_kind = "high_temp" if market_kind == "HIGH" else "low_temp"
         for market in markets:
-            if not helpers["is_active_market"](market):
-                continue
-            if not helpers["closes_between_2_and_48_hours"](market, now_dt):
-                continue
+            row_tasks.append(asyncio.create_task(build_row(series_ticker, market, location, market_kind)))
 
-            close_time = helpers["parse_iso8601"](market.get("close_time"))
-            midpoint = helpers["market_midpoint_probability"](market)
-            spread = helpers["market_spread"](market)
-            volume = helpers["parse_number"](market.get("volume_fp"))
-            open_interest = helpers["parse_number"](market.get("open_interest_fp"))
-            contract = helpers["extract_temperature_contract"](market, scan_kind)
-            if (
-                close_time is None
-                or midpoint is None
-                or spread is None
-                or volume is None
-                or open_interest is None
-                or contract is None
-            ):
-                continue
-            if spread > helpers["MAX_SPREAD"] or volume < helpers["MIN_VOLUME"] or open_interest < helpers["MIN_OPEN_INTEREST"]:
-                continue
-
-            threshold_kind, threshold = contract
-            try:
-                ensemble = helpers["try_ensemble_for_market"](
-                    market,
-                    scan_kind,
-                    location.name,
-                    close_time,
-                    threshold_kind,
-                    threshold,
-                    ensemble_cache,
-                    hgefs_cache=hgefs_cache,
-                    ecmwf_cache=ecmwf_cache,
-                    aifs_cache=aifs_cache,
-                )
-            except Exception as exc:
-                log.warning("weather opportunity ensemble failed for %s: %s", market.get("ticker"), exc)
-                continue
-            if ensemble is None:
-                continue
-
-            fair_yes = float(ensemble["probability"])
-            yes_bid = helpers["parse_price"](market.get("yes_bid_dollars"))
-            yes_ask = helpers["parse_price"](market.get("yes_ask_dollars"))
-            no_bid = helpers["parse_price"](market.get("no_bid_dollars"))
-            no_ask = helpers["parse_price"](market.get("no_ask_dollars"))
-            no_mid = ((no_bid + no_ask) / 2.0) if no_bid is not None and no_ask is not None else None
-            yes_edge = fair_yes - midpoint
-            no_edge = ((1.0 - fair_yes) - no_mid) if no_mid is not None else float("-inf")
-            if yes_edge >= no_edge:
-                recommended_side = "YES"
-                trade_edge = yes_edge
-            else:
-                recommended_side = "NO"
-                trade_edge = no_edge
-            if trade_edge < helpers["EDGE_THRESHOLD"]:
-                continue
-
-            model_probs = [
-                ensemble.get("gfs_prob"),
-                ensemble.get("aigefs_prob"),
-                ensemble.get("ecmwf_prob"),
-                ensemble.get("aifs_prob"),
-            ]
-            available_probs = [float(prob) for prob in model_probs if prob is not None]
-            disagreement_spread = (
-                max(available_probs) - min(available_probs) if len(available_probs) >= 2 else 0.0
-            )
-
-            rows.append(
-                {
-                    "ticker": str(market.get("ticker") or ""),
-                    "title": market.get("title"),
-                    "series_ticker": series_ticker,
-                    "event_ticker": market.get("event_ticker"),
-                    "city_code": location.code,
-                    "city_name": location.name,
-                    "market_kind": market_kind,
-                    "strike_label": f"{'>' if threshold_kind == 'gt' else '<'}{threshold:g}°",
-                    "threshold": threshold,
-                    "threshold_kind": threshold_kind,
-                    "close_time": close_time.isoformat(),
-                    "kalshi_yes_bid": yes_bid,
-                    "kalshi_yes_ask": yes_ask,
-                    "kalshi_yes_mid": midpoint,
-                    "kalshi_no_bid": no_bid,
-                    "kalshi_no_ask": no_ask,
-                    "kalshi_no_mid": no_mid,
-                    "fair_yes": fair_yes,
-                    "yes_edge": yes_edge,
-                    "trade_edge": trade_edge,
-                    "recommended_side": recommended_side,
-                    "confidence": ensemble.get("confidence"),
-                    "member_count": ensemble.get("member_count"),
-                    "agreement_count": ensemble.get("agreement_count"),
-                    "available_model_count": ensemble.get("available_count") or len(available_probs),
-                    "gfs_prob": ensemble.get("gfs_prob"),
-                    "aigefs_prob": ensemble.get("aigefs_prob"),
-                    "ecmwf_prob": ensemble.get("ecmwf_prob"),
-                    "aifs_prob": ensemble.get("aifs_prob"),
-                    "disagreement_spread": disagreement_spread,
-                    "spread": spread,
-                    "volume": volume,
-                    "open_interest": open_interest,
-                }
-            )
+    if row_tasks:
+        for result in await asyncio.gather(*row_tasks):
+            if result is not None:
+                rows.append(result)
 
     rows.sort(key=lambda row: float(row["trade_edge"]), reverse=True)
     snapshot = {
@@ -366,7 +498,7 @@ async def fetch_weather_opportunities(
     limit: int = 250,
     sort: str = "edge",
 ) -> dict[str, Any]:
-    cached = _CACHE if _CACHE["expires_at"] > time.time() and (_CACHE["rows"] or _CACHE["errors"]) else None
+    cached = _CACHE if _CACHE["expires_at"] > time.time() else None
     snapshot = cached or await _refresh_weather_opportunities(client)
     rows = _apply_filters(
         snapshot["rows"],
