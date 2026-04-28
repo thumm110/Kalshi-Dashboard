@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, fmtUsd, type CategoryDetail, type PnlRange } from "../lib/api";
 import { KpiCard, Panel } from "./KpiCard";
@@ -15,10 +15,21 @@ const RANGES: { id: PnlRange; label: string }[] = [
   { id: "7d", label: "7d" },
 ];
 
+type SeriesSort = "worst" | "best" | "trades" | "cost" | "az";
+
+const SERIES_SORTS: { id: SeriesSort; label: string }[] = [
+  { id: "worst", label: "Worst first" },
+  { id: "best", label: "Best first" },
+  { id: "trades", label: "Most trades" },
+  { id: "cost", label: "Highest cost" },
+  { id: "az", label: "A-Z" },
+];
+
 const REFRESH_MS = 30000;
 
 export function CategoryPnlPanel({ category, label }: Props) {
   const [range, setRange] = useState<PnlRange>("all");
+  const [seriesSort, setSeriesSort] = useState<SeriesSort>("worst");
   const [detail, setDetail] = useState<CategoryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,6 +81,18 @@ export function CategoryPnlPanel({ category, label }: Props) {
   const trades = stats ? stats.wins + stats.losses + stats.pushes : 0;
   const winRatePct = stats ? Math.round(stats.win_rate * 1000) / 10 : 0;
   const displayLabel = label || category;
+  const sortedSeriesBreakdown = useMemo(() => {
+    const rows = [...(detail?.series_breakdown ?? [])];
+    rows.sort((a, b) => {
+      if (seriesSort === "best") return b.pnl_cents - a.pnl_cents || a.series.localeCompare(b.series);
+      if (seriesSort === "trades") return b.count - a.count || a.series.localeCompare(b.series);
+      if (seriesSort === "cost") return b.cost_cents - a.cost_cents || a.series.localeCompare(b.series);
+      if (seriesSort === "az") return a.series.localeCompare(b.series);
+      return a.pnl_cents - b.pnl_cents || a.series.localeCompare(b.series);
+    });
+    return rows;
+  }, [detail?.series_breakdown, seriesSort]);
+  const selectedSeriesSort = SERIES_SORTS.find((sort) => sort.id === seriesSort)?.label ?? "Worst first";
 
   const chartData = series.map((p) => ({
     t: p.ts * 1000,
@@ -150,9 +173,25 @@ export function CategoryPnlPanel({ category, label }: Props) {
 
       {detail?.series_breakdown && detail.series_breakdown.length > 0 && (
         <div className="mt-3 border border-term-line">
-          <div className="px-2 py-1 border-b border-term-line text-[10px] tracking-[0.2em] text-term-dim uppercase flex items-center justify-between">
-            <span>By Series — worst first</span>
-            <span>{detail.series_breakdown.length} series</span>
+          <div className="px-2 py-1 border-b border-term-line text-[10px] text-term-dim uppercase flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="tracking-[0.2em]">By Series</span>
+              <select
+                value={seriesSort}
+                onChange={(event) => setSeriesSort(event.target.value as SeriesSort)}
+                className="rounded border border-term-line bg-term-panel px-1.5 py-0.5 text-[10px] normal-case tracking-normal text-term-text outline-none hover:border-term-cyan focus:border-term-cyan"
+                title="Sort series breakdown"
+              >
+                {SERIES_SORTS.map((sort) => (
+                  <option key={sort.id} value={sort.id}>
+                    {sort.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <span>
+              {detail.series_breakdown.length} series · {selectedSeriesSort}
+            </span>
           </div>
           <div className="max-h-56 overflow-y-auto">
             <table className="w-full text-[11px] tabular-nums">
@@ -167,7 +206,7 @@ export function CategoryPnlPanel({ category, label }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {detail.series_breakdown.map((row) => {
+                {sortedSeriesBreakdown.map((row) => {
                   const trades = row.wins + row.losses + row.pushes;
                   const rate = trades ? Math.round((row.wins / trades) * 1000) / 10 : 0;
                   return (

@@ -84,7 +84,7 @@ export const CITIES: WeatherCity[] = [
     series: ["HURTB","KXHURTB"] },
   { code: "JAX", name: "Jacksonville", lat: 30.3322, lng: -81.6557,
     series: ["HURJACKFL","KXHURJACKFL"] },
-  { code: "CHS", name: "Charleston",   lat: 32.7765, lng: -79.9311,
+  { code: "CHS", name: "Charleston",   lat: 32.8998, lng: -80.0406, timezone: "America/New_York", stationId: "KCHS", climateStation: "CHS", climateReportUrl: "https://forecast.weather.gov/product.php?site=CHS&product=CLI&issuedby=CHS",
     series: ["HURCHARL","KXHURCHARL"] },
   { code: "SAV", name: "Savannah",     lat: 32.0809, lng: -81.0912,
     series: ["HURSAV","KXHURSAV"] },

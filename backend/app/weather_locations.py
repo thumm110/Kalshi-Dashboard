@@ -57,6 +57,17 @@ WEATHER_LOCATIONS: tuple[WeatherLocation, ...] = (
         series=("KXHIGHTBOS", "KXLOWTBOS"),
     ),
     WeatherLocation(
+        code="CHS",
+        name="Charleston",
+        timezone="America/New_York",
+        lat=32.8998,
+        lng=-80.0406,
+        observation_station="KCHS",
+        climate_station="CHS",
+        climate_report_url="https://forecast.weather.gov/product.php?site=CHS&product=CLI&issuedby=CHS",
+        series=("HURCHARL", "KXHURCHARL"),
+    ),
+    WeatherLocation(
         code="CHI",
         name="Chicago",
         timezone="America/Chicago",
@@ -262,4 +273,3 @@ SERIES_TO_WEATHER_LOCATION: dict[str, WeatherLocation] = {
     for location in WEATHER_LOCATIONS
     for series in location.series
 }
-

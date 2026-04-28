@@ -182,20 +182,11 @@ export function WeatherPage({ positions, pulseKey }: Props) {
         />
       </div>
 
-      <div className="col-span-12 lg:col-span-9">
-        <Panel
-          title="US Weather Map"
-          right={
-            <span className="text-[10px] text-term-dim">
-              <span className="inline-block w-2 h-2 rounded-full bg-term-greenBright mr-1 align-middle" /> +pnl
-              <span className="inline-block w-2 h-2 rounded-full bg-term-red mx-1 ml-2 align-middle" /> -pnl
-              <span className="inline-block w-2 h-2 rounded-full bg-term-cyan mx-1 ml-2 align-middle" /> idle
-              <span className="inline-block w-2 h-2 rounded-full bg-gray-500 mx-1 ml-2 align-middle" /> stale
-            </span>
-          }
-        >
+      <div className="col-span-12">
+        <Panel title="US Weather Map" right={<span className="text-[10px] text-term-dim">fullscreen + hover detail</span>}>
           <WeatherMap
             positions={weatherPositions}
+            locations={guidance}
             pulseKey={pulseKey}
             selectedCity={selectedCity}
             onSelectCity={setSelectedCity}
@@ -203,7 +194,7 @@ export function WeatherPage({ positions, pulseKey }: Props) {
         </Panel>
       </div>
 
-      <div className="col-span-12 lg:col-span-3 self-start flex flex-col gap-3">
+      <div className="col-span-12 grid gap-3 lg:grid-cols-[minmax(220px,0.75fr)_minmax(420px,1.5fr)_minmax(220px,0.75fr)]">
         <Panel title="By Event Type">
           {byKind.length === 0 ? (
             <div className="text-term-dim text-xs">no weather positions</div>
