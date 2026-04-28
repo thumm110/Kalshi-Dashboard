@@ -463,12 +463,20 @@ async def market_history(
                  ticker, series, start_ts, end_ts, period)
     points = []
     for c in raw:
-        # Kalshi candlestick shape: price/yes_bid/yes_ask each have open/high/low/close/mean (cents).
+        # Kalshi candlestick shape: price/yes_bid/yes_ask each have
+        # open/high/low/close/mean — historically as cent ints, currently as
+        # `*_dollars` string fields (e.g. "0.1300" = 13¢). Support both.
         def pick(key: str):
             v = c.get(key) or {}
             for k in ("close", "mean", "open"):
                 if v.get(k) is not None:
-                    return v[k]
+                    return int(v[k])
+                dk = f"{k}_dollars"
+                if v.get(dk) is not None:
+                    try:
+                        return int(round(float(v[dk]) * 100))
+                    except (TypeError, ValueError):
+                        continue
             return None
         val = pick("price")
         if val is None:

@@ -21,31 +21,43 @@ export function CityCharts({ positions, hours = 24, period = 60 }: Props) {
       setData([]);
       return;
     }
-    setLoading(true);
-    Promise.all(
-      positions.map((p) =>
-        api
-          .marketHistory(p.ticker, hours, period)
-          .then((r) => ({
-            ticker: p.ticker,
-            kind: eventKindFromSeries(seriesFromTicker(p.ticker)),
-            position: p.position,
-            points: r.points,
-          }))
-          .catch(() => ({
-            ticker: p.ticker,
-            kind: eventKindFromSeries(seriesFromTicker(p.ticker)),
-            position: p.position,
-            points: [] as Point[],
-          }))
-      )
-    ).then((series) => {
+
+    async function load() {
+      setLoading(true);
+      const results = await Promise.all(
+        positions.map((p) =>
+          api
+            .marketHistory(p.ticker, hours, period)
+            .then((r) => ({ ticker: p.ticker, points: r.points, ok: true as const }))
+            .catch(() => ({ ticker: p.ticker, points: [] as Point[], ok: false as const }))
+        )
+      );
       if (cancelled) return;
-      setData(series);
+      setData((prev) => {
+        const prevByTicker = new Map(prev.map((s) => [s.ticker, s]));
+        return positions.map((p) => {
+          const r = results.find((x) => x.ticker === p.ticker);
+          // On fetch error, keep prior points if we had them (avoids clobbering on 429)
+          const points =
+            r && r.ok
+              ? r.points
+              : prevByTicker.get(p.ticker)?.points ?? [];
+          return {
+            ticker: p.ticker,
+            kind: eventKindFromSeries(seriesFromTicker(p.ticker)),
+            position: p.position,
+            points,
+          };
+        });
+      });
       setLoading(false);
-    });
+    }
+
+    load();
+    const id = window.setInterval(load, 90000);
     return () => {
       cancelled = true;
+      window.clearInterval(id);
     };
   }, [positions.map((p) => p.ticker).join("|"), hours, period]);
 
