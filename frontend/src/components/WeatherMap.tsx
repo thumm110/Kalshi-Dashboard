@@ -443,13 +443,12 @@ function MapCanvas({
             >
               {isHeld && (
                 <circle
-                  key={`flash-${city.code}-${pulseKey}`}
                   r={isCharleston ? 11 : 10}
                   fill="none"
                   stroke={pnlColor}
                   strokeWidth={1.8}
                   opacity={0.8}
-                  style={{ animation: "cityFlash 1.15s ease-out" }}
+                  style={{ animation: "cityBreathe 3.4s ease-in-out infinite", transformOrigin: "center", transformBox: "fill-box" }}
                 />
               )}
               {isCharleston ? (
@@ -513,10 +512,9 @@ function MapCanvas({
       <WeatherMapLegend fullscreen={fullscreen} />
 
       <style>{`
-        @keyframes cityFlash {
-          0%   { r: 5;  opacity: 0.95; stroke-width: 2.2; }
-          55%  { opacity: 0.75; }
-          100% { r: 18; opacity: 0;    stroke-width: 0.8; }
+        @keyframes cityBreathe {
+          0%, 100% { r: 6;  opacity: 0.35; stroke-width: 1.2; }
+          50%      { r: 14; opacity: 0.85; stroke-width: 2.0; }
         }
       `}</style>
     </div>

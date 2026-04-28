@@ -9,6 +9,7 @@ import { BotEdgeTable } from "../components/BotEdgeTable";
 import { CategoryPnlPanel } from "../components/CategoryPnlPanel";
 import { EnsembleRunPanel } from "../components/EnsembleRunPanel";
 import { WeatherOpportunityTable } from "../components/WeatherOpportunityTable";
+import { WeatherScanHeatmap } from "../components/WeatherScanHeatmap";
 import { CITIES, cityForTicker, eventKindFromSeries, seriesFromTicker } from "../lib/cities";
 import { api, fmtUsd, type BotSignal, type Position, type WeatherGuidanceLocation, type WeatherOpportunity } from "../lib/api";
 
@@ -192,6 +193,10 @@ export function WeatherPage({ positions, pulseKey }: Props) {
             onSelectCity={setSelectedCity}
           />
         </Panel>
+      </div>
+
+      <div className="col-span-12">
+        <WeatherScanHeatmap />
       </div>
 
       <div className="col-span-12 grid gap-3 lg:grid-cols-[minmax(220px,0.75fr)_minmax(420px,1.5fr)_minmax(220px,0.75fr)]">

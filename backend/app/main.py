@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .analytics import build_attention, build_scorecard, build_track_record
-from .bot_signals import fetch_bot_signals
+from .bot_signals import fetch_bot_signals, fetch_weather_scan_activity
 from .categorize import categorize
 from .config import settings
 from .db import get_snapshots, init_db
@@ -537,6 +537,15 @@ async def weather_guidance(tickers: str | None = Query(default=None)):
             "settle from the applicable final NWS climate report/rules source."
         ),
     }
+
+
+@app.get("/api/weather/scan-activity", dependencies=[Depends(require_auth)])
+async def weather_scan_activity(days: int = Query(default=14, ge=1, le=60)):
+    data = fetch_weather_scan_activity(
+        weather_db_path=settings.weather_bot_db_path,
+        days=days,
+    )
+    return {"ts": int(time.time()), **data}
 
 
 @app.get("/api/bot-signals", dependencies=[Depends(require_auth)])

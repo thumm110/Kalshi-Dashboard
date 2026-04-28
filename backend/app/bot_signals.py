@@ -152,6 +152,80 @@ def _signal_from_row(source: str, row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def fetch_weather_scan_activity(
+    weather_db_path: str,
+    days: int = 14,
+) -> dict[str, Any]:
+    """Aggregate weather-bot scan_cycles into a (days × 24h) candidates_found grid."""
+    status = {"available": False, "error": None, "path": os.path.expanduser(weather_db_path)}
+    conn = _connect_readonly(weather_db_path)
+    if conn is None:
+        status["error"] = "database not found"
+        return {
+            "days": [],
+            "hours": list(range(24)),
+            "cells": [],
+            "max_cell": 0,
+            "total_candidates": 0,
+            "total_cycles": 0,
+            "status": status,
+        }
+
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+                date(scanned_at, 'localtime') AS day,
+                CAST(strftime('%H', scanned_at, 'localtime') AS INTEGER) AS hour,
+                COALESCE(SUM(candidates_found), 0) AS candidates,
+                COUNT(*) AS cycles
+            FROM scan_cycles
+            WHERE scanned_at IS NOT NULL
+              AND scanned_at >= date('now', 'localtime', ?)
+            GROUP BY day, hour
+            ORDER BY day DESC, hour ASC
+            """,
+            (f"-{max(days - 1, 0)} days",),
+        ).fetchall()
+        status["available"] = True
+    except Exception as exc:
+        status["error"] = str(exc)
+        rows = []
+    finally:
+        conn.close()
+
+    by_day: dict[str, list[int]] = {}
+    total_candidates = 0
+    total_cycles = 0
+    for r in rows:
+        day = r["day"]
+        if day is None:
+            continue
+        hour = r["hour"] if r["hour"] is not None else 0
+        candidates = int(r["candidates"] or 0)
+        cycles = int(r["cycles"] or 0)
+        if day not in by_day:
+            by_day[day] = [0] * 24
+        if 0 <= hour < 24:
+            by_day[day][hour] = candidates
+        total_candidates += candidates
+        total_cycles += cycles
+
+    sorted_days = sorted(by_day.keys(), reverse=True)[:days]
+    cells = [by_day[d] for d in sorted_days]
+    max_cell = max((max(row) for row in cells), default=0)
+
+    return {
+        "days": sorted_days,
+        "hours": list(range(24)),
+        "cells": cells,
+        "max_cell": max_cell,
+        "total_candidates": total_candidates,
+        "total_cycles": total_cycles,
+        "status": status,
+    }
+
+
 def fetch_bot_signals(
     weather_db_path: str,
     econ_db_path: str,

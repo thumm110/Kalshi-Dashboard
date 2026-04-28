@@ -406,6 +406,17 @@ export type BotSignalsResponse = {
   count: number;
 };
 
+export type WeatherScanActivityResponse = {
+  ts: number;
+  days: string[];
+  hours: number[];
+  cells: number[][];
+  max_cell: number;
+  total_candidates: number;
+  total_cycles: number;
+  status: { available: boolean; error?: string | null; path: string };
+};
+
 export type PoliticsMarket = {
   ticker: string;
   title: string | null;
@@ -737,6 +748,8 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return fetchJson<WeatherOpportunitiesResponse>(`/api/weather/opportunities${suffix}`);
   },
+  weatherScanActivity: (days = 14) =>
+    fetchJson<WeatherScanActivityResponse>(`/api/weather/scan-activity?days=${days}`),
   botSignals: (tickers?: string[]) => {
     const qs = tickers && tickers.length > 0
       ? `?tickers=${encodeURIComponent(tickers.join(","))}`
