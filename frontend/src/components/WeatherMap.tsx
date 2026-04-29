@@ -185,7 +185,68 @@ function PnlDot({ className }: { className: string }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-full align-middle ${className}`} />;
 }
 
+function useIsMobile(breakpoint = 640): boolean {
+  const [isMobile, setIsMobile] = useState<boolean>(() =>
+    typeof window === "undefined" ? false : window.innerWidth < breakpoint
+  );
+  useEffect(() => {
+    function onResize() {
+      setIsMobile(window.innerWidth < breakpoint);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function WeatherMapLegend({ fullscreen }: { fullscreen: boolean }) {
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false);
+
+  if (isMobile && !fullscreen) {
+    return (
+      <div className="absolute bottom-2 left-2 z-10">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="rounded border border-term-line bg-[#080d12]/92 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-term-text shadow-lg backdrop-blur"
+        >
+          {open ? "Hide Key" : "Map Key"}
+        </button>
+        {open && (
+          <div className="mt-1 max-w-[calc(100vw-32px)] rounded border border-term-line bg-[#080d12]/95 p-2 text-[10px] text-term-dim shadow-xl backdrop-blur">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              {LEGEND_ITEMS.map((item) => (
+                <span key={item.kind} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                  <LegendIcon kind={item.kind} />
+                  {item.label}
+                </span>
+              ))}
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <ChsLegendIcon />
+                CHS home
+              </span>
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-term-line/70 pt-1.5">
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <PnlDot className="bg-term-greenBright" />profit
+              </span>
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <PnlDot className="bg-term-red" />loss
+              </span>
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <PnlDot className="bg-gray-500" />flat
+              </span>
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <PnlDot className="bg-term-cyan" />no pos
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`absolute bottom-2 left-2 z-10 rounded border border-term-line bg-[#080d12]/92 text-[10px] text-term-dim shadow-xl shadow-black/30 backdrop-blur ${
@@ -273,17 +334,13 @@ function InfoRow({ label, value, tone }: { label: string; value: string; tone?: 
   );
 }
 
-function CityTooltip({
+function CityTooltipBody({
   state,
   location,
-  x,
-  y,
   fullscreen,
 }: {
   state: CityState;
   location?: WeatherGuidanceLocation;
-  x: number;
-  y: number;
   fullscreen: boolean;
 }) {
   const pnlTone = state.totalPnl >= 0 ? "text-term-greenBright" : "text-term-red";
@@ -291,14 +348,7 @@ function CityTooltip({
   const hiddenPositions = state.positions.length - pos.length;
 
   return (
-    <div
-      className="pointer-events-none absolute z-20 w-[min(360px,calc(100%-24px))] rounded border border-term-line bg-[#080d12]/95 p-3 text-[11px] shadow-2xl shadow-black/50 backdrop-blur"
-      style={{
-        left: x,
-        top: y,
-        transform: `translate(${x > 68 ? "-100%" : "12px"}, ${y > 58 ? "-100%" : "12px"})`,
-      }}
-    >
+    <>
       <div className="mb-2 flex items-start justify-between gap-3 border-b border-term-line/70 pb-2">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-term-text">{state.city.name}</div>
@@ -352,6 +402,66 @@ function CityTooltip({
       )}
 
       {location?.error && <div className="mt-2 border-t border-term-line/70 pt-2 text-[10px] text-term-amber">{location.error}</div>}
+    </>
+  );
+}
+
+function CityTooltip({
+  state,
+  location,
+  x,
+  y,
+  fullscreen,
+  containerWidth,
+  containerHeight,
+}: {
+  state: CityState;
+  location?: WeatherGuidanceLocation;
+  x: number;
+  y: number;
+  fullscreen: boolean;
+  containerWidth: number;
+  containerHeight: number;
+}) {
+  // Flip relative to container size, not absolute pixels.
+  const flipX = containerWidth > 0 && x > containerWidth * 0.55;
+  const flipY = containerHeight > 0 && y > containerHeight * 0.55;
+  return (
+    <div
+      className="pointer-events-none absolute z-20 w-[min(360px,calc(100%-24px))] rounded border border-term-line bg-[#080d12]/95 p-3 text-[11px] shadow-2xl shadow-black/50 backdrop-blur"
+      style={{
+        left: x,
+        top: y,
+        transform: `translate(${flipX ? "-100%" : "12px"}, ${flipY ? "-100%" : "12px"})`,
+      }}
+    >
+      <CityTooltipBody state={state} location={location} fullscreen={fullscreen} />
+    </div>
+  );
+}
+
+function CitySheet({
+  state,
+  location,
+  fullscreen,
+  onClose,
+}: {
+  state: CityState;
+  location?: WeatherGuidanceLocation;
+  fullscreen: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute inset-x-2 bottom-2 z-30 max-h-[70%] overflow-y-auto rounded border border-term-line bg-[#080d12]/97 p-3 text-[12px] shadow-2xl shadow-black/60 backdrop-blur">
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute right-2 top-2 rounded border border-term-line bg-term-panel/90 px-2 py-0.5 text-[11px] text-term-dim hover:text-term-text"
+      >
+        ×
+      </button>
+      <CityTooltipBody state={state} location={location} fullscreen={fullscreen} />
     </div>
   );
 }
@@ -376,11 +486,20 @@ function MapCanvas({
   onCloseFullscreen?: () => void;
 }) {
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const isMobile = useIsMobile();
   const hoveredState = hover ? states.find((state) => state.city.code === hover.code) : null;
+  const selectedState = selectedCity ? states.find((state) => state.city.code === selectedCity) : null;
+  // On mobile, the bottom sheet is driven by the persistent selectedCity (tap to open),
+  // not by the transient hover state.
+  const sheetState = isMobile ? selectedState : null;
 
   function moveHover(code: string, event: MouseEvent<SVGGElement>) {
-    const rect = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+    if (isMobile) return; // suppress floating tooltip on touch devices
+    const svg = event.currentTarget.ownerSVGElement;
+    const rect = svg?.getBoundingClientRect();
     if (!rect) return;
+    setContainerSize({ w: rect.width, h: rect.height });
     setHover({
       code,
       x: event.clientX - rect.left,
@@ -401,7 +520,7 @@ function MapCanvas({
       <ComposableMap
         projection="geoAlbersUsa"
         projectionConfig={{ scale: fullscreen ? 1200 : 1000 }}
-        style={{ width: "100%", height: "100%" }}
+        style={{ width: "100%", height: "100%", backgroundColor: "#0b1226" }}
       >
         <Geographies geography={US_TOPO}>
           {({ geographies }) =>
@@ -410,9 +529,9 @@ function MapCanvas({
                 key={geo.rsmKey}
                 geography={geo}
                 style={{
-                  default: { fill: "#0f1419", stroke: "#1f2937", strokeWidth: 0.5, outline: "none" },
-                  hover:   { fill: "#151c24", stroke: "#374151", strokeWidth: 0.5, outline: "none" },
-                  pressed: { fill: "#151c24", stroke: "#374151", strokeWidth: 0.5, outline: "none" },
+                  default: { fill: "#0f1419", stroke: "#4a5a73", strokeWidth: 0.7, outline: "none" },
+                  hover:   { fill: "#151c24", stroke: "#6b7d96", strokeWidth: 0.7, outline: "none" },
+                  pressed: { fill: "#151c24", stroke: "#6b7d96", strokeWidth: 0.7, outline: "none" },
                 }}
               />
             ))
@@ -499,13 +618,24 @@ function MapCanvas({
         })}
       </ComposableMap>
 
-      {hover && hoveredState && (
+      {!isMobile && hover && hoveredState && (
         <CityTooltip
           state={hoveredState}
           location={locationsByCode.get(hoveredState.city.code)}
           x={hover.x}
           y={hover.y}
           fullscreen={fullscreen}
+          containerWidth={containerSize.w}
+          containerHeight={containerSize.h}
+        />
+      )}
+
+      {isMobile && sheetState && (
+        <CitySheet
+          state={sheetState}
+          location={locationsByCode.get(sheetState.city.code)}
+          fullscreen={fullscreen}
+          onClose={() => onSelectCity(null)}
         />
       )}
 

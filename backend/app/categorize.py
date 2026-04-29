@@ -5,7 +5,7 @@ refine over time as we discover new series.
 """
 
 CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("Weather",  ("KXHIGH", "KXLOW", "KXTEMP", "KXDV", "HIGH", "LOW", "TEMP", "RAIN", "SNOW", "HURRICANE")),
+    ("Weather",  ("KXHIGH", "KXLOW", "KXTEMP", "KXDV", "KXMIN", "KXRAIN", "KXSNOW", "KXHUR", "KXEMERGENCY", "KXEARTHQUAKE", "EMERGENCY", "HIGH", "LOW", "TEMP", "MIN", "RAIN", "SNOW", "HUR", "HURRICANE")),
     ("Crypto",   ("KXBTC", "KXETH", "BTC", "ETH", "CRYPTO")),
     ("Sports",   ("KXNFL", "KXNBA", "KXMLB", "KXNHL", "KXUFC", "KXMLS", "KXUCL", "KXMOTOGP", "KXNASCAR", "KXF1", "KXMARMAD", "KXWMARMAD", "KXWNBA", "KXPGA", "KXCOACHOUT", "KXMVESPORTS", "MVESPORTS", "NFL", "NBA", "MLB", "NHL", "UFC", "NCAA", "PGA", "TEN", "MLS", "F1", "NASCAR")),
     ("Politics", ("PRES", "GOV", "SEN", "HOUSE", "ELECT", "POTUS", "KXPRES")),
