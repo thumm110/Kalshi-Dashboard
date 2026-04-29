@@ -16,7 +16,7 @@ log = logging.getLogger("kalshi-dashboard.weather-opportunities")
 
 _CACHE_TTL_SECONDS = 180
 _FETCH_CONCURRENCY = 4
-_ENSEMBLE_CONCURRENCY = 5
+_ENSEMBLE_CONCURRENCY = 2
 _MIN_CLOSE_HOURS = 2
 _MAX_CLOSE_HOURS = 48
 _MAX_SPREAD = 0.15
