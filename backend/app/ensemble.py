@@ -1,16 +1,17 @@
-"""Open-Meteo ensemble helpers for the weather page."""
+"""Open-Meteo ensemble helpers for the weather page.
+
+The dashboard is a *read-only consumer* of the predict-and-profit weather
+bot's Open-Meteo cache. We never call Open-Meteo directly from here — the
+bot is the sole fetcher, so the IP-level rate limit is owned by one
+process. On cache miss the dashboard surfaces a clean error and the UI
+shows "pending" rather than stampeding the upstream API.
+"""
 from __future__ import annotations
 
 import math
-import re
 import time
 from datetime import date
 from typing import Any
-
-import asyncio
-import random
-
-import httpx
 
 from . import bot_om_cache, ensemble_cache
 
@@ -37,26 +38,21 @@ CITY_PRESETS: dict[str, dict[str, Any]] = {
     "sat": {"label": "San Antonio", "lat": 29.5337, "lon": -98.4698, "timezone": "America/Chicago"},
 }
 
-ENSEMBLE_API_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
-MEMBER_PATTERN = re.compile(r"^temperature_2m_member(\d+)$")
 ENSEMBLE_MODELS: dict[str, dict[str, Any]] = {
     "gfs": {
         "label": "GFS",
         "description": "31-member GFS",
-        "api_models": ("gfs_seamless",),
     },
     "ecmwf": {
         "label": "ECMWF IFS",
         "description": "51-member ECMWF IFS",
-        "api_models": ("ecmwf_ifs025", "ecmwf_ifs04"),
     },
 }
 _CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
-_CACHE_TTL_SECONDS = 60 * 60
-# Open-Meteo ensemble runs only refresh every ~6h upstream, so a 60-min TTL
-# is still well within the freshness window and cuts our outbound volume 4x
-# vs. the previous 15-min TTL. On 429s we'll also serve `_STALE_TTL_SECONDS`
-# of stale data instead of failing the request.
+# Mirror the bot's per-provider TTL (~3h GFS/IFS) so "fresh" means roughly
+# the same thing on both sides. Stale window covers cases where the bot is
+# itself rate-limited and the cache hasn't refreshed.
+_CACHE_TTL_SECONDS = 3 * 60 * 60
 _STALE_TTL_SECONDS = 6 * 60 * 60
 
 
@@ -93,28 +89,37 @@ async def fetch_ensemble(
     timezone_name: str,
     forecast_date: date,
 ) -> dict[str, Any]:
+    """Return ensemble data sourced from the bot's Open-Meteo cache.
+
+    Lookup order: in-memory → SQLite → bot cache file. Falls back to the
+    freshest stale entry within `_STALE_TTL_SECONDS` if nothing fresh is
+    available. Raises `RuntimeError` only when no cached value exists at
+    all — callers translate that into a "pending" UI state.
+
+    `latitude`, `longitude`, `timezone_name` are accepted for API
+    compatibility but unused; the bot already fetched these coordinates.
+    """
     ensemble = get_ensemble_model(model_key)
     cache_key = (model_key, location_key, forecast_date.isoformat())
     forecast_iso = forecast_date.isoformat()
     now = time.time()
+    stale_candidate: dict[str, Any] | None = None
 
-    # 1) In-memory cache (cheapest, sub-ms)
     entry = _CACHE.get(cache_key)
     if entry and (now - float(entry["cached_at"])) <= _CACHE_TTL_SECONDS:
-        return entry["result"]
+        return _annotate(entry["result"], cached_at=float(entry["cached_at"]), source="memory", now=now)
+    if entry is not None:
+        stale_candidate = entry
 
-    # 2) Persistent SQLite cache (survives restarts)
     persisted = ensemble_cache.get(model_key, location_key, forecast_iso)
     if persisted is not None:
         cached_at, result = persisted
         if (now - cached_at) <= _CACHE_TTL_SECONDS:
             _CACHE[cache_key] = {"cached_at": cached_at, "result": result}
-            return result
-        # Hold onto the stale entry for 429-fallback below.
-        if entry is None:
-            entry = {"cached_at": cached_at, "result": result}
+            return _annotate(result, cached_at=cached_at, source="dashboard_sqlite", now=now)
+        if stale_candidate is None:
+            stale_candidate = {"cached_at": cached_at, "result": result}
 
-    # 3) Piggyback on the weather-bot's Open-Meteo cache, if present and fresh.
     bot_hit = bot_om_cache.lookup(
         model_key=model_key,
         location_code=location_key,
@@ -123,7 +128,6 @@ async def fetch_ensemble(
     )
     if bot_hit is not None:
         bot_cached_at, bot_result = bot_hit
-        # Splice in our model labels so the result still looks normal to callers.
         bot_result = {
             **bot_result,
             "model": model_key,
@@ -133,95 +137,30 @@ async def fetch_ensemble(
         if (now - bot_cached_at) <= _CACHE_TTL_SECONDS:
             _CACHE[cache_key] = {"cached_at": bot_cached_at, "result": bot_result}
             ensemble_cache.put(model_key, location_key, forecast_iso, bot_result)
-            return bot_result
-        if entry is None:
-            entry = {"cached_at": bot_cached_at, "result": bot_result}
+            return _annotate(bot_result, cached_at=bot_cached_at, source="bot", now=now)
+        if stale_candidate is None:
+            stale_candidate = {"cached_at": bot_cached_at, "result": bot_result}
 
-    last_error: str | None = None
-    # Small jitter so a burst of N parallel callers (with concurrency=5) doesn't
-    # arrive at Open-Meteo as a synchronized spike.
-    await asyncio.sleep(random.uniform(0.05, 0.35))
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        for api_model in ensemble["api_models"]:
-            params = {
-                "latitude": latitude,
-                "longitude": longitude,
-                "hourly": "temperature_2m",
-                "models": api_model,
-                "temperature_unit": "fahrenheit",
-                "forecast_days": 2,
-                "timezone": timezone_name,
-            }
-            response = await client.get(ENSEMBLE_API_URL, params=params)
-            if response.status_code in {400, 404}:
-                last_error = f"Open-Meteo model '{api_model}' unavailable"
-                continue
-            if response.status_code == 429:
-                # Rate-limited. Serve stale cache if we have any (up to STALE_TTL),
-                # otherwise raise so the caller can record the failure and move on.
-                if entry and (time.time() - float(entry["cached_at"])) <= _STALE_TTL_SECONDS:
-                    return entry["result"]
-                raise RuntimeError(
-                    f"Open-Meteo rate-limited (429) for model '{api_model}' and no stale cache available"
-                )
-            response.raise_for_status()
+    if stale_candidate and (now - float(stale_candidate["cached_at"])) <= _STALE_TTL_SECONDS:
+        return _annotate(
+            stale_candidate["result"],
+            cached_at=float(stale_candidate["cached_at"]),
+            source="stale",
+            now=now,
+        )
 
-            data = response.json()
-            hourly = data.get("hourly", {})
-            times: list[str] = hourly.get("time", [])
-            date_prefix = forecast_date.isoformat()
+    raise RuntimeError(
+        f"Forecast not yet cached by weather-bot for {location_key}/{model_key}/{forecast_iso}. "
+        f"Bot will populate on its next scan."
+    )
 
-            member_keys: list[tuple[int, str]] = []
-            if "temperature_2m" in hourly:
-                member_keys.append((0, "temperature_2m"))
-            for key in hourly:
-                match = MEMBER_PATTERN.match(key)
-                if match:
-                    member_keys.append((int(match.group(1)), key))
-            member_keys.sort(key=lambda item: item[0])
-            if not member_keys:
-                last_error = f"No ensemble member columns were returned for model '{api_model}'."
-                continue
 
-            target_indices = [
-                idx for idx, stamp in enumerate(times)
-                if isinstance(stamp, str) and stamp.startswith(date_prefix)
-            ]
-            if not target_indices:
-                raise RuntimeError(f"No hourly data was returned for {forecast_date.isoformat()}.")
-
-            member_highs: list[float] = []
-            member_lows: list[float] = []
-            for _, key in member_keys:
-                raw_values: list[Any] = hourly.get(key, [])
-                day_values: list[float] = []
-                for idx in target_indices:
-                    if idx < len(raw_values) and raw_values[idx] is not None:
-                        day_values.append(float(raw_values[idx]))
-                if not day_values:
-                    raise RuntimeError(f"Member {key} had no valid temperatures for {forecast_date.isoformat()}.")
-                member_highs.append(max(day_values))
-                member_lows.append(min(day_values))
-
-            result = {
-                "location_key": location_key,
-                "forecast_date": forecast_date.isoformat(),
-                "model": model_key,
-                "model_label": ensemble["label"],
-                "model_description": ensemble["description"],
-                "api_model": api_model,
-                "member_count": len(member_highs),
-                "member_highs": member_highs,
-                "member_lows": member_lows,
-            }
-            _CACHE[cache_key] = {"cached_at": time.time(), "result": result}
-            ensemble_cache.put(model_key, location_key, forecast_iso, result)
-            return result
-
-    # All API attempts failed without a 429: serve stale (own or bot) if we have one.
-    if entry and (time.time() - float(entry["cached_at"])) <= _STALE_TTL_SECONDS:
-        return entry["result"]
-    raise RuntimeError(last_error or f"No ensemble data returned for model '{model_key}'.")
+def _annotate(result: dict[str, Any], *, cached_at: float, source: str, now: float) -> dict[str, Any]:
+    return {
+        **result,
+        "cache_source": source,
+        "cache_age_seconds": max(0, int(now - cached_at)),
+    }
 
 
 def probability_for_threshold(member_values: list[float], threshold: float, direction: str) -> float:

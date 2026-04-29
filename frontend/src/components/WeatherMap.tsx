@@ -5,6 +5,7 @@ import { CITIES, type WeatherCity } from "../lib/cities";
 import type { Position, WeatherGuidanceLocation } from "../lib/api";
 import { fmtUsd } from "../lib/api";
 import { eventKindFromSeries, seriesFromTicker } from "../lib/cities";
+import { WindyCityPopup, WindyPreconnect, WindyPreload } from "./WindyCityPopup";
 
 const US_TOPO = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json";
 
@@ -487,6 +488,8 @@ function MapCanvas({
 }) {
   const [hover, setHover] = useState<HoverState | null>(null);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [windyCity, setWindyCity] = useState<WeatherCity | null>(null);
+  const [preloadCity, setPreloadCity] = useState<WeatherCity | null>(null);
   const isMobile = useIsMobile();
   const hoveredState = hover ? states.find((state) => state.city.code === hover.code) : null;
   const selectedState = selectedCity ? states.find((state) => state.city.code === selectedCity) : null;
@@ -505,6 +508,8 @@ function MapCanvas({
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     });
+    const city = states.find((state) => state.city.code === code)?.city;
+    if (city) setPreloadCity(city);
   }
 
   return (
@@ -550,7 +555,15 @@ function MapCanvas({
             <Marker
               key={city.code}
               coordinates={[city.lng, city.lat]}
-              onClick={() => onSelectCity(isSelected ? null : city.code)}
+              onClick={() => {
+                if (windyCity?.code === city.code) {
+                  setWindyCity(null);
+                  onSelectCity(null);
+                } else {
+                  setWindyCity(city);
+                  onSelectCity(city.code);
+                }
+              }}
               onMouseEnter={(event) => moveHover(city.code, event)}
               onMouseMove={(event) => moveHover(city.code, event)}
               onMouseLeave={() => setHover(null)}
@@ -638,6 +651,29 @@ function MapCanvas({
           onClose={() => onSelectCity(null)}
         />
       )}
+
+      <WindyPreconnect />
+      <WindyPreload city={preloadCity && (!windyCity || windyCity.code !== preloadCity.code) ? preloadCity : null} />
+      {windyCity && (() => {
+        const popupState = states.find((s) => s.city.code === windyCity.code);
+        if (!popupState) return null;
+        return (
+          <WindyCityPopup
+            city={windyCity}
+            leftPane={
+              <CityTooltipBody
+                state={popupState}
+                location={locationsByCode.get(windyCity.code)}
+                fullscreen
+              />
+            }
+            onClose={() => {
+              setWindyCity(null);
+              onSelectCity(null);
+            }}
+          />
+        );
+      })()}
 
       <WeatherMapLegend fullscreen={fullscreen} />
 

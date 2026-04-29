@@ -7,7 +7,6 @@ import { WeatherGuidance } from "../components/WeatherGuidance";
 import { AllCitiesWeather } from "../components/AllCitiesWeather";
 import { BotEdgeTable } from "../components/BotEdgeTable";
 import { CategoryPnlPanel } from "../components/CategoryPnlPanel";
-import { EnsembleRunPanel } from "../components/EnsembleRunPanel";
 import { WeatherOpportunityTable } from "../components/WeatherOpportunityTable";
 import { WeatherScanHeatmap } from "../components/WeatherScanHeatmap";
 import { CITIES, cityForTicker, eventKindFromSeries, seriesFromTicker } from "../lib/cities";
@@ -244,10 +243,6 @@ export function WeatherPage({ positions, pulseKey }: Props) {
             </div>
           </div>
         </Panel>
-      </div>
-
-      <div className="col-span-12">
-        <EnsembleRunPanel />
       </div>
 
       <div className="col-span-12">

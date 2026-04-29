@@ -764,57 +764,6 @@ export const api = {
   nbaScores: () => fetchJson<NbaScoresResponse>("/api/nba/scores"),
   mlbScores: () => fetchJson<MlbScoresResponse>("/api/mlb/scores"),
   golfLeaderboard: () => fetchJson<GolfLeaderboardResponse>("/api/golf/leaderboard"),
-  ensembleCities: () => fetchJson<EnsembleCitiesResponse>("/api/ensemble/cities"),
-  ensembleRun: (params: EnsembleRunParams) => {
-    const qs = new URLSearchParams();
-    qs.set("date", params.date);
-    if (params.model) qs.set("model", params.model);
-    qs.set("mode", params.mode);
-    if (params.city) qs.set("city", params.city);
-    if (params.lat !== undefined) qs.set("lat", String(params.lat));
-    if (params.lon !== undefined) qs.set("lon", String(params.lon));
-    if (params.timezone) qs.set("timezone", params.timezone);
-    if (params.threshold !== undefined && params.threshold !== null) {
-      qs.set("threshold", String(params.threshold));
-      qs.set("direction", params.direction);
-    }
-    return fetchJson<EnsembleRunResult>(`/api/ensemble/run?${qs.toString()}`);
-  },
-};
-
-export type EnsembleCity = { key: string; label: string; timezone: string };
-export type EnsembleCitiesResponse = { ts: number; cities: EnsembleCity[] };
-
-export type EnsembleRunParams = {
-  date: string;
-  model?: "gfs" | "ecmwf";
-  mode: "high" | "low";
-  city?: string;
-  lat?: number;
-  lon?: number;
-  timezone?: string;
-  threshold?: number | null;
-  direction: "above" | "below";
-};
-
-export type EnsembleRunResult = {
-  ts: number;
-  location_label: string;
-  latitude: number;
-  longitude: number;
-  timezone: string;
-  forecast_date: string;
-  model: "gfs" | "ecmwf";
-  model_label: string;
-  model_description: string;
-  api_model: string;
-  mode: "high" | "low";
-  member_count: number;
-  members: number[];
-  summary: { min: number; max: number; mean: number; median: number; stddev: number };
-  threshold: number | null;
-  direction: "above" | "below" | null;
-  probability: number | null;
 };
 
 export function fmtUsd(cents: number, sign = false): string {
